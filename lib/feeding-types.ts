@@ -20,6 +20,7 @@ export type MealAllocation = FeedItem & {
 export type MealView = {
   id: string;
   number: number;
+  extra: boolean;
   completed: boolean;
   allocations: MealAllocation[];
 };

@@ -50,6 +50,7 @@ export const mealRecords = sqliteTable("meal_records", {
   id: text("id").primaryKey(),
   dayId: text("day_id").notNull().references(() => feedingDays.id, { onDelete: "cascade" }),
   mealNumber: integer("meal_number").notNull(),
+  isExtra: integer("is_extra", { mode: "boolean" }).notNull().default(false),
   completedAt: text("completed_at"),
 }, (table) => [
   uniqueIndex("idx_meal_records_day_number").on(table.dayId, table.mealNumber),

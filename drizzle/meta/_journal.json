@@ -8,6 +8,13 @@
       "when": 1786696123535,
       "tag": "0000_loose_sabra",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786697845404,
+      "tag": "0001_rare_emma_frost",
+      "breakpoints": true
     }
   ]
 }

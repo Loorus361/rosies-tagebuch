@@ -1,10 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import type { FeedKind, FeedingState, MealView } from "@/lib/feeding-types";
 
 type Props = { displayName: string };
-type Editor = { mealId: string; values: Record<string, string> } | null;
+type Editor = { mealId: string } | null;
 
 export function FeedingApp({ displayName }: Props) {
   const [selectedDate, setSelectedDate] = useState(() => localDate());
@@ -13,10 +13,10 @@ export function FeedingApp({ displayName }: Props) {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
+  const [savingMealId, setSavingMealId] = useState<string | null>(null);
+  const [addingExtra, setAddingExtra] = useState(false);
 
-  const load = useCallback(async (date: string, quiet = false) => {
-    if (!quiet) setLoading(true);
-    setError("");
+  const load = useCallback(async (date: string) => {
     try {
       const response = await fetch(`/api/feeding?date=${encodeURIComponent(date)}`);
       const data = await response.json() as FeedingState & { error?: string };
@@ -30,6 +30,8 @@ export function FeedingApp({ displayName }: Props) {
     }
   }, []);
 
+  // Loading the selected date is the external synchronization this effect owns.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(selectedDate); }, [load, selectedDate]);
 
   async function mutate(body: Record<string, unknown>, keepSettings = false) {
@@ -41,42 +43,58 @@ export function FeedingApp({ displayName }: Props) {
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error || "Die Änderung konnte nicht gespeichert werden.");
-    await load(selectedDate, true);
+    await load(selectedDate);
     setSettingsOpen(keepSettings);
   }
 
   function moveDay(offset: number) {
     const date = new Date(`${selectedDate}T12:00:00Z`);
     date.setUTCDate(date.getUTCDate() + offset);
+    setLoading(true);
+    setError("");
     setSelectedDate(date.toISOString().slice(0, 10));
     setEditor(null);
   }
 
-  function openMeal(meal: MealView) {
-    setEditor({
-      mealId: meal.id,
-      values: Object.fromEntries(meal.allocations.map((item) => [
-        item.id,
-        String(item.actualGrams ?? item.plannedGrams),
-      ])),
-    });
+  function selectDay(date: string) {
+    setLoading(true);
+    setError("");
+    setSelectedDate(date);
+    setEditor(null);
   }
 
-  async function submitMeal(event: FormEvent, meal: MealView) {
+  function openMeal(meal: MealView) {
+    setEditor({ mealId: meal.id });
+  }
+
+  async function submitMeal(event: FormEvent, meal: MealView, values: Record<string, string>) {
     event.preventDefault();
-    if (!editor) return;
+    setSavingMealId(meal.id);
     try {
       await mutate({
         action: "save_meal",
         mealId: meal.id,
         actuals: meal.allocations.map((item) => ({
           feedItemId: item.id,
-          actualGrams: editor.values[item.id],
+          actualGrams: values[item.id],
         })),
       });
       setEditor(null);
     } catch (saveError) {
       setError(messageOf(saveError));
+    } finally {
+      setSavingMealId(null);
+    }
+  }
+
+  async function addExtra() {
+    setAddingExtra(true);
+    try {
+      await mutate({ action: "add_extra_meal", date: selectedDate });
+    } catch (addError) {
+      setError(messageOf(addError));
+    } finally {
+      setAddingExtra(false);
     }
   }
 
@@ -84,6 +102,7 @@ export function FeedingApp({ displayName }: Props) {
   const selectedLabel = formatLongDate(selectedDate);
   const isToday = state?.today === selectedDate;
   const completed = state?.day?.meals.filter((meal) => meal.completed).length ?? 0;
+  const extraCount = state?.day?.meals.filter((meal) => meal.extra).length ?? 0;
 
   return (
     <main className="app-shell">
@@ -109,11 +128,11 @@ export function FeedingApp({ displayName }: Props) {
             className="date-input"
             type="date"
             value={selectedDate}
-            onChange={(event) => setSelectedDate(event.target.value)}
+            onChange={(event) => selectDay(event.target.value)}
             aria-label="Datum"
           />
           <button className="icon-button" type="button" onClick={() => moveDay(1)} aria-label="Nächster Tag">→</button>
-          {!isToday && <button className="text-button" type="button" onClick={() => setSelectedDate(state?.today ?? localDate())}>Heute</button>}
+          {!isToday && <button className="text-button" type="button" onClick={() => selectDay(state?.today ?? localDate())}>Heute</button>}
         </div>
       </section>
 
@@ -126,12 +145,12 @@ export function FeedingApp({ displayName }: Props) {
             <>
               <section className="summary-card" aria-label="Tagesübersicht">
                 <div>
-                  <span className="card-label">Tagesplan</span>
-                  <p className="summary-number">{state.day.mealCount} Mahlzeiten</p>
+                  <span className="card-label">Tagesvorgaben</span>
+                  <p className="summary-number">{state.day.mealCount} reguläre Mahlzeiten</p>
                   <p className="muted">
                     {state.day.virtual
                       ? `Gilt ab ${formatShortDate(state.day.effectiveDate)} · Noch keine Ist-Mengen möglich`
-                      : `${completed} von ${state.day.meals.length} Mahlzeiten eingetragen`}
+                      : `${completed} von ${state.day.meals.length} Mahlzeiten eingetragen${extraCount ? ` · ${extraCount} zusätzlich` : ""}`}
                   </p>
                 </div>
                 <button className="secondary-button" type="button" onClick={() => setSettingsOpen(true)}>
@@ -174,48 +193,38 @@ export function FeedingApp({ displayName }: Props) {
                       <div className="meal-heading">
                         <div>
                           <span className="meal-number">{String(meal.number).padStart(2, "0")}</span>
-                          <h3>Mahlzeit {meal.number}</h3>
+                          <h3>{meal.extra ? "Zusätzliche Mahlzeit" : `Mahlzeit ${meal.number}`}</h3>
                         </div>
                         <span className={`meal-status ${meal.completed ? "done" : "open"}`}>
                           {meal.completed ? "Eingetragen" : "Offen"}
                         </span>
                       </div>
 
-                      {editor?.mealId === meal.id ? (
-                        <form className="meal-form" onSubmit={(event) => void submitMeal(event, meal)}>
-                          <p>Tatsächlich gefüttert</p>
-                          {meal.allocations.map((item) => (
-                            <label className="amount-input-row" key={item.id}>
-                              <span>{item.name}<small>Vorschlag {grams(item.plannedGrams)}</small></span>
-                              <span className="input-with-unit">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="10000"
-                                  step="0.1"
-                                  value={editor.values[item.id] ?? ""}
-                                  onChange={(event) => setEditor({
-                                    ...editor,
-                                    values: { ...editor.values, [item.id]: event.target.value },
-                                  })}
-                                  aria-label={`Tatsächliche Menge ${item.name}`}
-                                  required
-                                />
-                                <span>g</span>
-                              </span>
-                            </label>
-                          ))}
-                          <div className="form-actions">
-                            <button className="text-button" type="button" onClick={() => setEditor(null)}>Abbrechen</button>
-                            <button className="primary-button compact" type="submit">Menge speichern</button>
-                          </div>
-                        </form>
+                      {!meal.completed ? (
+                        <MealAmountForm
+                          key={`${meal.id}-${meal.allocations.map((item) => item.plannedGrams).join("-")}`}
+                          meal={meal}
+                          disabled={Boolean(state.day?.virtual) || savingMealId === meal.id}
+                          previewOnly={Boolean(state.day?.virtual)}
+                          onSubmit={(event, values) => void submitMeal(event, meal, values)}
+                        />
+                      ) : editor?.mealId === meal.id ? (
+                        <MealAmountForm
+                          meal={meal}
+                          disabled={savingMealId === meal.id}
+                          correction
+                          onCancel={() => setEditor(null)}
+                          onSubmit={(event, values) => void submitMeal(event, meal, values)}
+                        />
                       ) : (
                         <>
                           <dl className="allocation-list">
                             {meal.allocations.map((item) => (
                               <div key={item.id}>
-                                <dt><span className={`food-dot ${item.kind}`} />{item.name}</dt>
+                                <dt>
+                                  <span className={`food-dot ${item.kind}`} />
+                                  <span>{item.name}<small className="meal-kind-label">{kindLabel(item.kind)}</small></span>
+                                </dt>
                                 <dd>
                                   {meal.completed
                                     ? <><strong>{grams(item.actualGrams ?? 0)}</strong><small>statt {grams(item.plannedGrams)}</small></>
@@ -224,16 +233,23 @@ export function FeedingApp({ displayName }: Props) {
                               </div>
                             ))}
                           </dl>
-                          {!state.day?.virtual && (
-                            <button className={meal.completed ? "text-button edit-entry" : "primary-button meal-action"} type="button" onClick={() => openMeal(meal)}>
-                              {meal.completed ? "Eintrag korrigieren" : "Tatsächliche Menge eintragen"}
-                            </button>
-                          )}
+                          <button className="text-button edit-entry" type="button" onClick={() => openMeal(meal)}>Eintrag korrigieren</button>
                         </>
                       )}
                     </article>
                   ))}
                 </div>
+                {!state.day.virtual && (
+                  <div className="extra-meal-panel">
+                    <div>
+                      <h3>Noch eine Mahlzeit?</h3>
+                      <p>Nur für diesen Tag. Die regulären Tagesvorgaben bleiben unverändert.</p>
+                    </div>
+                    <button className="secondary-button" type="button" onClick={() => void addExtra()} disabled={addingExtra}>
+                      {addingExtra ? "Wird hinzugefügt …" : "Zusätzliche Mahlzeit hinzufügen"}
+                    </button>
+                  </div>
+                )}
               </section>
             </>
           ) : (
@@ -254,6 +270,7 @@ export function FeedingApp({ displayName }: Props) {
 
       {settingsOpen && state && (
         <SettingsDialog
+          key={`${state.date}-${state.currentPlan?.id ?? "none"}-${state.feedItems.map((item) => item.id).join("-")}`}
           state={state}
           onClose={() => state.currentPlan && setSettingsOpen(false)}
           onMutate={mutate}
@@ -261,6 +278,61 @@ export function FeedingApp({ displayName }: Props) {
         />
       )}
     </main>
+  );
+}
+
+function MealAmountForm({
+  meal,
+  disabled,
+  previewOnly = false,
+  correction = false,
+  onCancel,
+  onSubmit,
+}: {
+  meal: MealView;
+  disabled: boolean;
+  previewOnly?: boolean;
+  correction?: boolean;
+  onCancel?: () => void;
+  onSubmit: (event: FormEvent, values: Record<string, string>) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(
+    meal.allocations.map((item) => [item.id, String(item.actualGrams ?? item.plannedGrams)]),
+  ));
+  return (
+    <form className="meal-form inline-meal-form" onSubmit={(event) => onSubmit(event, values)}>
+      <p>{previewOnly ? "Vorgeschlagene Menge" : correction ? "Tatsächliche Menge korrigieren" : "Vorschlag direkt anpassen"}</p>
+      {meal.allocations.map((item) => (
+        <label className="amount-input-row" key={item.id}>
+          <span>
+            {item.name}
+            <small className="meal-kind-label">{kindLabel(item.kind)}</small>
+          </span>
+          <span className="input-with-unit">
+            <input
+              type="number"
+              min="0"
+              max="10000"
+              step="0.1"
+              value={values[item.id] ?? ""}
+              onChange={(event) => setValues({ ...values, [item.id]: event.target.value })}
+              aria-label={`${kindLabel(item.kind)} ${item.name}, tatsächliche Menge`}
+              disabled={disabled}
+              required
+            />
+            <span>g</span>
+          </span>
+        </label>
+      ))}
+      {!previewOnly && (
+        <div className="form-actions">
+          {correction && <button className="text-button" type="button" onClick={onCancel}>Abbrechen</button>}
+          <button className="primary-button meal-action" type="submit" disabled={disabled}>
+            {disabled ? "Wird gespeichert …" : correction ? "Korrektur speichern" : "Gefüttert"}
+          </button>
+        </div>
+      )}
+    </form>
   );
 }
 
@@ -291,17 +363,6 @@ function SettingsDialog({
     ]),
   ));
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setAmounts((current) => Object.fromEntries(state.feedItems.map((item) => [
-      item.id,
-      current[item.id] ?? String(
-        selectedTargets?.find((target) => target.id === item.id)?.targetGrams
-        ?? state.currentPlan?.items.find((planItem) => planItem.id === item.id)?.dailyGrams
-        ?? 0
-      ),
-    ])));
-  }, [state.feedItems, state.currentPlan, selectedTargets]);
 
   async function addItem(event: FormEvent) {
     event.preventDefault();
@@ -339,7 +400,7 @@ function SettingsDialog({
         <div className="dialog-heading">
           <div>
             <p className="eyebrow">Fütterung einrichten</p>
-            <h2 id="settings-title">Bausteine &amp; Tagesmengen</h2>
+            <h2 id="settings-title">Dauerhafte Tagesvorgaben</h2>
           </div>
           {state.currentPlan && <button className="close-button" type="button" onClick={onClose} aria-label="Schließen">×</button>}
         </div>
@@ -371,7 +432,7 @@ function SettingsDialog({
 
           <form className="settings-panel plan-panel" onSubmit={(event) => void submitPlan(event)}>
             <h3>Tagesvorgaben</h3>
-            <p className="muted">Die App verteilt jede Tagesmenge gleichmäßig. Einzelne Ist-Mengen kannst du später anpassen.</p>
+            <p className="muted">Diese Standardmengen und die reguläre Mahlzeitenzahl gelten ab dem gewählten Datum. Vorschläge kannst du unten im jeweiligen Tag direkt anpassen.</p>
             <div className="two-fields">
               <label>
                 <span>Gültig ab</span>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import {
   assertDate,
+  addExtraMeal,
   berlinToday,
   createFeedItem,
   getFeedingState,
@@ -37,6 +38,9 @@ export async function POST(request: NextRequest) {
         break;
       case "save_meal":
         await saveMeal(user.userId, body.mealId, body.actuals);
+        break;
+      case "add_extra_meal":
+        await addExtraMeal(user.userId, body.date);
         break;
       default:
         return NextResponse.json({ error: "Unbekannte Aktion." }, { status: 400 });

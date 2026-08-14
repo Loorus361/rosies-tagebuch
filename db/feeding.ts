@@ -13,7 +13,7 @@ import type {
 type VersionRow = { id: string; effective_date: string; meal_count: number };
 type DayRow = { id: string; plan_date: string; meal_count: number; effective_date: string };
 type DayItemRow = { feed_item_id: string; item_name: string; feed_kind: FeedKind; target_grams: number };
-type MealRow = { id: string; meal_number: number; completed_at: string | null };
+type MealRow = { id: string; meal_number: number; is_extra: number; completed_at: string | null };
 type AllocationRow = {
   meal_id: string;
   feed_item_id: string;
@@ -118,7 +118,7 @@ export async function savePlan(
     const completed = await db.prepare(
       `SELECT COALESCE(MAX(m.meal_number), 0) AS highest
        FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
-       WHERE d.owner_id = ? AND d.plan_date = ? AND m.completed_at IS NOT NULL`,
+       WHERE d.owner_id = ? AND d.plan_date = ? AND m.is_extra = 0 AND m.completed_at IS NOT NULL`,
     ).bind(ownerId, today).first<{ highest: number }>();
     if (mealCount < Number(completed?.highest ?? 0)) {
       throw new Error(`Heute ist Mahlzeit ${completed?.highest} bereits abgeschlossen. Wähle mindestens ${completed?.highest} Mahlzeiten.`);
@@ -210,6 +210,59 @@ export async function saveMeal(ownerId: string, mealId: unknown, rawActuals: unk
   await db.batch(statements);
 }
 
+export async function addExtraMeal(ownerId: string, rawDate: unknown): Promise<void> {
+  assertDate(rawDate);
+  const date = rawDate;
+  if (date > berlinToday()) {
+    throw new Error("Eine zusätzliche Mahlzeit kann erst am ausgewählten Tag angelegt werden.");
+  }
+  const db = getD1();
+  const day = await db.prepare(
+    `SELECT id FROM feeding_days WHERE owner_id = ? AND plan_date = ?`,
+  ).bind(ownerId, date).first<{ id: string }>();
+  if (!day) throw new Error("Für diesen Tag gibt es noch keinen Tagesplan.");
+
+  const [targets, actuals, openMeals, lastMeal] = await Promise.all([
+    db.prepare(
+      `SELECT feed_item_id, item_name, feed_kind, target_grams
+       FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
+    ).bind(day.id).all<DayItemRow>(),
+    db.prepare(
+      `SELECT a.feed_item_id, COALESCE(SUM(a.actual_grams), 0) AS total
+       FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
+       WHERE m.day_id = ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
+    ).bind(day.id).all<{ feed_item_id: string; total: number }>(),
+    db.prepare(
+      `SELECT id, meal_number FROM meal_records
+       WHERE day_id = ? AND completed_at IS NULL ORDER BY meal_number`,
+    ).bind(day.id).all<{ id: string; meal_number: number }>(),
+    db.prepare(
+      `SELECT COALESCE(MAX(meal_number), 0) AS highest FROM meal_records WHERE day_id = ?`,
+    ).bind(day.id).first<{ highest: number }>(),
+  ]);
+
+  const extraMeal = { id: crypto.randomUUID(), meal_number: Number(lastMeal?.highest ?? 0) + 1 };
+  const allOpenMeals = [...openMeals.results, extraMeal];
+  const statements = [
+    db.prepare(
+      `INSERT INTO meal_records (id, day_id, meal_number, is_extra, completed_at)
+       VALUES (?, ?, ?, 1, NULL)`,
+    ).bind(extraMeal.id, day.id, extraMeal.meal_number),
+    ...openMeals.results.map((meal) =>
+      db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(meal.id)),
+  ];
+  for (const target of targets.results) {
+    const actual = Number(actuals.results.find((row) => row.feed_item_id === target.feed_item_id)?.total ?? 0);
+    const portions = distribute(Math.max(0, roundGram(target.target_grams - actual)), allOpenMeals.length);
+    allOpenMeals.forEach((meal, index) => statements.push(db.prepare(
+      `INSERT INTO meal_allocations
+       (meal_id, feed_item_id, item_name, feed_kind, planned_grams, actual_grams)
+       VALUES (?, ?, ?, ?, ?, NULL)`,
+    ).bind(meal.id, target.feed_item_id, target.item_name, target.feed_kind, portions[index])));
+  }
+  await db.batch(statements);
+}
+
 async function readPlan(ownerId: string, date: string): Promise<PlanView | null> {
   const db = getD1();
   const version = await db.prepare(
@@ -252,7 +305,7 @@ async function ensureDay(ownerId: string, date: string, plan: PlanView): Promise
        (day_id, feed_item_id, item_name, feed_kind, target_grams) VALUES (?, ?, ?, ?, ?)`,
     ).bind(dayId, item.id, item.name, item.kind, item.dailyGrams)),
     ...mealIds.map((id, index) => db.prepare(
-      `INSERT OR IGNORE INTO meal_records (id, day_id, meal_number, completed_at) VALUES (?, ?, ?, NULL)`,
+      `INSERT OR IGNORE INTO meal_records (id, day_id, meal_number, is_extra, completed_at) VALUES (?, ?, ?, 0, NULL)`,
     ).bind(id, dayId, index + 1)),
   ];
   plan.items.forEach((item) => {
@@ -279,7 +332,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
       `SELECT feed_item_id, item_name, feed_kind, target_grams FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
     ).bind(day.id).all<DayItemRow>(),
     db.prepare(
-      `SELECT id, meal_number, completed_at FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
+      `SELECT id, meal_number, is_extra, completed_at FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
     ).bind(day.id).all<MealRow>(),
     db.prepare(
       `SELECT a.meal_id, a.feed_item_id, a.item_name, a.feed_kind, a.planned_grams, a.actual_grams
@@ -290,6 +343,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
   const mealViews: MealView[] = meals.results.map((meal) => ({
     id: meal.id,
     number: meal.meal_number,
+    extra: Boolean(meal.is_extra),
     completed: Boolean(meal.completed_at),
     allocations: allocations.results.filter((row) => row.meal_id === meal.id).map((row): MealAllocation => ({
       id: row.feed_item_id,
@@ -333,13 +387,15 @@ async function applyPlanToToday(
 ): Promise<void> {
   const db = getD1();
   const day = await db.prepare(
-    "SELECT id FROM feeding_days WHERE owner_id = ? AND plan_date = ?",
-  ).bind(ownerId, date).first<{ id: string }>();
+    "SELECT id, meal_count FROM feeding_days WHERE owner_id = ? AND plan_date = ?",
+  ).bind(ownerId, date).first<{ id: string; meal_count: number }>();
   if (!day) return;
   const mealRows = await db.prepare(
-    `SELECT id, meal_number, completed_at FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
+    `SELECT id, meal_number, is_extra, completed_at FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
   ).bind(day.id).all<MealRow>();
-  const highestCompleted = Math.max(0, ...mealRows.results.filter((item) => item.completed_at).map((item) => item.meal_number));
+  const highestCompleted = Math.max(0, ...mealRows.results
+    .filter((item) => !item.is_extra && item.completed_at)
+    .map((item) => item.meal_number));
   if (mealCount < highestCompleted) {
     throw new Error(`Heute ist Mahlzeit ${highestCompleted} bereits abgeschlossen. Wähle mindestens ${highestCompleted} Mahlzeiten.`);
   }
@@ -348,13 +404,17 @@ async function applyPlanToToday(
      FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
      WHERE m.day_id = ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
   ).bind(day.id).all<{ feed_item_id: string; total: number }>();
-  const kept = mealRows.results.filter((item) => item.meal_number <= mealCount || Boolean(item.completed_at));
-  const missing = Array.from({ length: mealCount }, (_, index) => index + 1)
-    .filter((number) => !kept.some((item) => item.meal_number === number))
-    .map((number) => ({ id: crypto.randomUUID(), meal_number: number, completed_at: null }));
-  const allMeals = [...kept, ...missing].sort((a, b) => a.meal_number - b.meal_number);
-  const open = allMeals.filter((item) => !item.completed_at && item.meal_number <= mealCount);
-  const obsolete = mealRows.results.filter((item) => !item.completed_at && item.meal_number > mealCount);
+  const standardRows = mealRows.results.filter((item) => !item.is_extra).sort((a, b) => a.meal_number - b.meal_number);
+  const extras = mealRows.results.filter((item) => Boolean(item.is_extra)).sort((a, b) => a.meal_number - b.meal_number);
+  const retainedStandards = standardRows.slice(0, mealCount);
+  const obsolete = standardRows.slice(mealCount);
+  const missing = Array.from(
+    { length: Math.max(0, mealCount - retainedStandards.length) },
+    () => ({ id: crypto.randomUUID(), meal_number: 0, is_extra: 0, completed_at: null }),
+  );
+  const finalStandards = [...retainedStandards, ...missing];
+  const allMeals = [...finalStandards, ...extras].map((item, index) => ({ ...item, finalNumber: index + 1 }));
+  const open = allMeals.filter((item) => !item.completed_at);
   const oldItems = await db.prepare(
     "SELECT feed_item_id FROM feeding_day_items WHERE day_id = ?",
   ).bind(day.id).all<{ feed_item_id: string }>();
@@ -362,6 +422,9 @@ async function applyPlanToToday(
     db.prepare(
       `UPDATE feeding_days SET source_plan_version_id = ?, meal_count = ? WHERE id = ? AND owner_id = ?`,
     ).bind(versionId, mealCount, day.id, ownerId),
+    ...mealRows.results.map((item, index) => db.prepare(
+      `UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?`,
+    ).bind(-(index + 1), item.id, day.id)),
     ...oldItems.results.map((item) => db.prepare(
       `UPDATE feeding_day_items SET target_grams = 0 WHERE day_id = ? AND feed_item_id = ?`,
     ).bind(day.id, item.feed_item_id)),
@@ -375,8 +438,11 @@ async function applyPlanToToday(
       `DELETE FROM meal_records WHERE id = ? AND day_id = ?`,
     ).bind(item.id, day.id)),
     ...missing.map((item) => db.prepare(
-      `INSERT INTO meal_records (id, day_id, meal_number, completed_at) VALUES (?, ?, ?, NULL)`,
-    ).bind(item.id, day.id, item.meal_number)),
+      `INSERT INTO meal_records (id, day_id, meal_number, is_extra, completed_at) VALUES (?, ?, ?, 0, NULL)`,
+    ).bind(item.id, day.id, allMeals.find((meal) => meal.id === item.id)!.finalNumber)),
+    ...allMeals.filter((item) => !missing.some((newItem) => newItem.id === item.id)).map((item) => db.prepare(
+      `UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?`,
+    ).bind(item.finalNumber, item.id, day.id)),
     ...open.filter((item) => !missing.some((newItem) => newItem.id === item.id)).map((item) =>
       db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
   ];
@@ -396,6 +462,7 @@ function virtualDay(date: string, plan: PlanView): DayView {
   const meals = Array.from({ length: plan.mealCount }, (_, index): MealView => ({
     id: `preview-${index + 1}`,
     number: index + 1,
+    extra: false,
     completed: false,
     allocations: plan.items.map((item) => ({
       id: item.id,
