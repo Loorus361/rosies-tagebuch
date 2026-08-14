@@ -147,6 +147,78 @@ test("runs the complete daily feeding flow without changing future defaults", as
   assert.equal(future.day.meals.length, 3);
   assert.ok(future.day.meals.every((meal) => !meal.extra));
 
+  const removalOwner = "removal-owner";
+  await post({ action: "create_item", name: "Entfernen Nass", kind: "wet" }, removalOwner);
+  await post({ action: "create_item", name: "Entfernen Trocken", kind: "dry" }, removalOwner);
+  let removalState = (await request(`/api/feeding?date=${today}`, { owner: removalOwner })).json;
+  const removalWet = removalState.feedItems.find((item) => item.kind === "wet");
+  const removalDry = removalState.feedItems.find((item) => item.kind === "dry");
+  await post({
+    action: "save_plan",
+    effectiveDate: today,
+    mealCount: 3,
+    items: [
+      { feedItemId: removalWet.id, dailyGrams: 90 },
+      { feedItemId: removalDry.id, dailyGrams: 30 },
+    ],
+  }, removalOwner);
+  removalState = (await request(`/api/feeding?date=${today}`, { owner: removalOwner })).json;
+  const trackedMeal = removalState.day.meals[0];
+  await post({
+    action: "save_meal",
+    mealId: trackedMeal.id,
+    actuals: trackedMeal.allocations.map((item) => ({ feedItemId: item.id, actualGrams: item.plannedGrams })),
+  }, removalOwner);
+  removalState = (await request(`/api/feeding?date=${today}`, { owner: removalOwner })).json;
+
+  const protectedRemoval = await request("/api/feeding", {
+    method: "POST",
+    owner: removalOwner,
+    body: { action: "remove_meal", mealId: trackedMeal.id },
+  });
+  assert.equal(protectedRemoval.response.status, 400);
+  assert.match(protectedRemoval.json.error, /Tagebucheintrag erhalten/);
+
+  const untrackedThird = removalState.day.meals.find((meal) => meal.number === 3);
+  const removedRegular = await post({ action: "remove_meal", mealId: untrackedThird.id }, removalOwner);
+  assert.equal(removedRegular.day.mealCount, 3);
+  assert.equal(removedRegular.day.meals.length, 2);
+  assert.deepEqual(removedRegular.day.meals.map((meal) => meal.number), [1, 2]);
+  assert.deepEqual(
+    gramsByKind(removedRegular.day.meals.find((meal) => !meal.completed).allocations, "plannedGrams"),
+    { wet: 60, dry: 20 },
+  );
+  const removalFuture = (await request(`/api/feeding?date=${tomorrow}`, { owner: removalOwner })).json;
+  assert.equal(removalFuture.day.mealCount, 3);
+  assert.equal(removalFuture.day.meals.length, 3);
+
+  const addedForDay = await post({ action: "add_extra_meal", date: today }, removalOwner);
+  assert.equal(addedForDay.day.mealCount, 3);
+  assert.equal(addedForDay.day.meals.length, 3);
+  assert.deepEqual(addedForDay.day.meals.map((meal) => meal.number), [1, 2, 3]);
+  assert.equal(addedForDay.day.meals.filter((meal) => meal.extra).length, 1);
+  const addedOpenSuggestions = addedForDay.day.meals.filter((meal) => !meal.completed)
+    .map((meal) => gramsByKind(meal.allocations, "plannedGrams"));
+  assert.deepEqual(addedOpenSuggestions, [{ wet: 30, dry: 10 }, { wet: 30, dry: 10 }]);
+
+  const removableAddedMeal = addedForDay.day.meals.find((meal) => meal.extra);
+  const removedAdded = await post({ action: "remove_meal", mealId: removableAddedMeal.id }, removalOwner);
+  assert.equal(removedAdded.day.mealCount, 3);
+  assert.equal(removedAdded.day.meals.length, 2);
+  assert.deepEqual(removedAdded.day.meals.map((meal) => meal.number), [1, 2]);
+  assert.equal(removedAdded.day.meals.filter((meal) => meal.extra).length, 0);
+  assert.deepEqual(
+    gramsByKind(removedAdded.day.meals.find((meal) => !meal.completed).allocations, "plannedGrams"),
+    { wet: 60, dry: 20 },
+  );
+
+  const foreignRemoval = await request("/api/feeding", {
+    method: "POST",
+    owner: "other-owner",
+    body: { action: "remove_meal", mealId: removedAdded.day.meals[1].id },
+  });
+  assert.equal(foreignRemoval.response.status, 400);
+
   const isolated = (await request(`/api/feeding?date=${today}`, { owner: "other-owner" })).json;
   assert.deepEqual(isolated.feedItems, []);
   assert.equal(isolated.day, null);

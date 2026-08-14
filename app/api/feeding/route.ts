@@ -5,7 +5,9 @@ import {
   addExtraMeal,
   berlinToday,
   createFeedItem,
+  getFeedingDay,
   getFeedingState,
+  removeOpenMeal,
   saveMeal,
   savePlan,
 } from "@/db/feeding";
@@ -40,8 +42,13 @@ export async function POST(request: NextRequest) {
         await saveMeal(user.userId, body.mealId, body.actuals);
         break;
       case "add_extra_meal":
+        assertDate(body.date);
         await addExtraMeal(user.userId, body.date);
-        break;
+        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, body.date) });
+      case "remove_meal": {
+        const date = await removeOpenMeal(user.userId, body.mealId);
+        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
+      }
       default:
         return NextResponse.json({ error: "Unbekannte Aktion." }, { status: 400 });
     }

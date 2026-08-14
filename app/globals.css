@@ -108,6 +108,7 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .meal-form > p { color: var(--muted); font-size: .84rem; font-weight: 700; }
 .inline-meal-form { display: flex; flex: 1; flex-direction: column; }
 .inline-meal-form .form-actions { margin-top: auto; padding-top: 14px; }
+.remove-meal-action { align-self: flex-start; margin-top: 12px; }
 .amount-input-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; }
 .amount-input-row > span:first-child { display: grid; gap: 3px; font-weight: 700; }
 .amount-input-row small { color: var(--muted); font-size: .75rem; font-weight: 400; }

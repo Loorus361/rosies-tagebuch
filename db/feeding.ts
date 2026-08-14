@@ -68,6 +68,11 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
   return { date: selectedDate, today, feedItems, currentPlan, day };
 }
 
+export async function getFeedingDay(ownerId: string, selectedDate: string): Promise<DayView | null> {
+  assertDate(selectedDate);
+  return readDay(ownerId, selectedDate);
+}
+
 export async function createFeedItem(ownerId: string, rawName: unknown, rawKind: unknown): Promise<void> {
   const name = typeof rawName === "string" ? rawName.trim().replace(/\s+/g, " ") : "";
   if (!name || name.length > 80) throw new Error("Der Futtername muss zwischen 1 und 80 Zeichen lang sein.");
@@ -261,6 +266,70 @@ export async function addExtraMeal(ownerId: string, rawDate: unknown): Promise<v
     ).bind(meal.id, target.feed_item_id, target.item_name, target.feed_kind, portions[index])));
   }
   await db.batch(statements);
+}
+
+export async function removeOpenMeal(ownerId: string, rawMealId: unknown): Promise<string> {
+  if (typeof rawMealId !== "string" || !rawMealId) {
+    throw new Error("Die Mahlzeit konnte nicht entfernt werden.");
+  }
+  const db = getD1();
+  const meal = await db.prepare(
+    `SELECT m.id, m.day_id, m.completed_at, d.plan_date
+     FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
+     WHERE m.id = ? AND d.owner_id = ?`,
+  ).bind(rawMealId, ownerId).first<{
+    id: string;
+    day_id: string;
+    completed_at: string | null;
+    plan_date: string;
+  }>();
+  if (!meal) throw new Error("Diese Mahlzeit gehört nicht zu deinem privaten Bereich.");
+  if (meal.completed_at) {
+    throw new Error("Eine bereits gefütterte Mahlzeit bleibt als Tagebucheintrag erhalten.");
+  }
+  if (meal.plan_date > berlinToday()) {
+    throw new Error("Mahlzeiten können erst am ausgewählten Tag entfernt werden.");
+  }
+
+  const [targets, actuals, remainingMeals] = await Promise.all([
+    db.prepare(
+      `SELECT feed_item_id, item_name, feed_kind, target_grams
+       FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
+    ).bind(meal.day_id).all<DayItemRow>(),
+    db.prepare(
+      `SELECT a.feed_item_id, COALESCE(SUM(a.actual_grams), 0) AS total
+       FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
+       WHERE m.day_id = ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
+    ).bind(meal.day_id).all<{ feed_item_id: string; total: number }>(),
+    db.prepare(
+      `SELECT id, meal_number, is_extra, completed_at FROM meal_records
+       WHERE day_id = ? AND id != ? ORDER BY meal_number`,
+    ).bind(meal.day_id, meal.id).all<MealRow>(),
+  ]);
+  const openMeals = remainingMeals.results.filter((item) => !item.completed_at);
+  const statements = [
+    db.prepare("DELETE FROM meal_records WHERE id = ? AND day_id = ? AND completed_at IS NULL")
+      .bind(meal.id, meal.day_id),
+    ...remainingMeals.results.map((item, index) => db.prepare(
+      "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
+    ).bind(-(index + 1), item.id, meal.day_id)),
+    ...remainingMeals.results.map((item, index) => db.prepare(
+      "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
+    ).bind(index + 1, item.id, meal.day_id)),
+    ...openMeals.map((item) =>
+      db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
+  ];
+  for (const target of targets.results) {
+    const actual = Number(actuals.results.find((row) => row.feed_item_id === target.feed_item_id)?.total ?? 0);
+    const portions = distribute(Math.max(0, roundGram(target.target_grams - actual)), openMeals.length);
+    openMeals.forEach((openMeal, index) => statements.push(db.prepare(
+      `INSERT INTO meal_allocations
+       (meal_id, feed_item_id, item_name, feed_kind, planned_grams, actual_grams)
+       VALUES (?, ?, ?, ?, ?, NULL)`,
+    ).bind(openMeal.id, target.feed_item_id, target.item_name, target.feed_kind, portions[index])));
+  }
+  await db.batch(statements);
+  return meal.plan_date;
 }
 
 async function readPlan(ownerId: string, date: string): Promise<PlanView | null> {

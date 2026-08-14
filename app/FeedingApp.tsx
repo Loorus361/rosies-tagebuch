@@ -15,6 +15,7 @@ export function FeedingApp({ displayName }: Props) {
   const [editor, setEditor] = useState<Editor>(null);
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
   const [addingExtra, setAddingExtra] = useState(false);
+  const [removingMealId, setRemovingMealId] = useState<string | null>(null);
 
   const load = useCallback(async (date: string) => {
     try {
@@ -41,9 +42,13 @@ export function FeedingApp({ displayName }: Props) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json() as { error?: string };
+    const result = await response.json() as { error?: string; day?: FeedingState["day"] };
     if (!response.ok) throw new Error(result.error || "Die Änderung konnte nicht gespeichert werden.");
-    await load(selectedDate);
+    if (Object.prototype.hasOwnProperty.call(result, "day")) {
+      setState((current) => current ? { ...current, day: result.day ?? null } : current);
+    } else {
+      await load(selectedDate);
+    }
     setSettingsOpen(keepSettings);
   }
 
@@ -98,11 +103,21 @@ export function FeedingApp({ displayName }: Props) {
     }
   }
 
+  async function removeMeal(meal: MealView) {
+    setRemovingMealId(meal.id);
+    try {
+      await mutate({ action: "remove_meal", mealId: meal.id });
+    } catch (removeError) {
+      setError(messageOf(removeError));
+    } finally {
+      setRemovingMealId(null);
+    }
+  }
+
   const greetingName = displayName.includes("@") ? "Carlos" : displayName.split(" ")[0];
   const selectedLabel = formatLongDate(selectedDate);
   const isToday = state?.today === selectedDate;
   const completed = state?.day?.meals.filter((meal) => meal.completed).length ?? 0;
-  const extraCount = state?.day?.meals.filter((meal) => meal.extra).length ?? 0;
 
   return (
     <main className="app-shell">
@@ -150,7 +165,7 @@ export function FeedingApp({ displayName }: Props) {
                   <p className="muted">
                     {state.day.virtual
                       ? `Gilt ab ${formatShortDate(state.day.effectiveDate)} · Noch keine Ist-Mengen möglich`
-                      : `${completed} von ${state.day.meals.length} Mahlzeiten eingetragen${extraCount ? ` · ${extraCount} zusätzlich` : ""}`}
+                      : `${completed} von ${state.day.meals.length} Mahlzeiten eingetragen`}
                   </p>
                 </div>
                 <button className="secondary-button" type="button" onClick={() => setSettingsOpen(true)}>
@@ -193,7 +208,7 @@ export function FeedingApp({ displayName }: Props) {
                       <div className="meal-heading">
                         <div>
                           <span className="meal-number">{String(meal.number).padStart(2, "0")}</span>
-                          <h3>{meal.extra ? "Zusätzliche Mahlzeit" : `Mahlzeit ${meal.number}`}</h3>
+                          <h3>Mahlzeit {meal.number}</h3>
                         </div>
                         <span className={`meal-status ${meal.completed ? "done" : "open"}`}>
                           {meal.completed ? "Eingetragen" : "Offen"}
@@ -204,14 +219,18 @@ export function FeedingApp({ displayName }: Props) {
                         <MealAmountForm
                           key={`${meal.id}-${meal.allocations.map((item) => item.plannedGrams).join("-")}`}
                           meal={meal}
-                          disabled={Boolean(state.day?.virtual) || savingMealId === meal.id}
+                          disabled={Boolean(state.day?.virtual) || savingMealId === meal.id || removingMealId !== null || addingExtra}
+                          saving={savingMealId === meal.id}
                           previewOnly={Boolean(state.day?.virtual)}
+                          removing={removingMealId === meal.id}
+                          onRemove={() => void removeMeal(meal)}
                           onSubmit={(event, values) => void submitMeal(event, meal, values)}
                         />
                       ) : editor?.mealId === meal.id ? (
                         <MealAmountForm
                           meal={meal}
                           disabled={savingMealId === meal.id}
+                          saving={savingMealId === meal.id}
                           correction
                           onCancel={() => setEditor(null)}
                           onSubmit={(event, values) => void submitMeal(event, meal, values)}
@@ -243,10 +262,14 @@ export function FeedingApp({ displayName }: Props) {
                   <div className="extra-meal-panel">
                     <div>
                       <h3>Noch eine Mahlzeit?</h3>
-                      <p>Nur für diesen Tag. Die regulären Tagesvorgaben bleiben unverändert.</p>
+                      <p role={addingExtra ? "status" : undefined} aria-live="polite">
+                        {addingExtra
+                          ? "Wird gespeichert und die offenen Vorschläge werden neu verteilt …"
+                          : "Nur für diesen Tag. Die regulären Tagesvorgaben bleiben unverändert."}
+                      </p>
                     </div>
-                    <button className="secondary-button" type="button" onClick={() => void addExtra()} disabled={addingExtra}>
-                      {addingExtra ? "Wird hinzugefügt …" : "Zusätzliche Mahlzeit hinzufügen"}
+                    <button className="secondary-button" type="button" onClick={() => void addExtra()} disabled={addingExtra || removingMealId !== null}>
+                      {addingExtra ? "Wird hinzugefügt …" : "Neue Mahlzeit hinzufügen"}
                     </button>
                   </div>
                 )}
@@ -286,14 +309,20 @@ function MealAmountForm({
   disabled,
   previewOnly = false,
   correction = false,
+  saving = false,
+  removing = false,
   onCancel,
+  onRemove,
   onSubmit,
 }: {
   meal: MealView;
   disabled: boolean;
   previewOnly?: boolean;
   correction?: boolean;
+  saving?: boolean;
+  removing?: boolean;
   onCancel?: () => void;
+  onRemove?: () => void;
   onSubmit: (event: FormEvent, values: Record<string, string>) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(
@@ -325,12 +354,25 @@ function MealAmountForm({
         </label>
       ))}
       {!previewOnly && (
-        <div className="form-actions">
-          {correction && <button className="text-button" type="button" onClick={onCancel}>Abbrechen</button>}
-          <button className="primary-button meal-action" type="submit" disabled={disabled}>
-            {disabled ? "Wird gespeichert …" : correction ? "Korrektur speichern" : "Gefüttert"}
-          </button>
-        </div>
+        <>
+          <div className="form-actions">
+            {correction && <button className="text-button" type="button" onClick={onCancel}>Abbrechen</button>}
+            <button className="primary-button meal-action" type="submit" disabled={disabled}>
+              {saving ? "Wird gespeichert …" : correction ? "Korrektur speichern" : "Gefüttert"}
+            </button>
+          </div>
+          {!correction && onRemove && (
+            <button
+              className="text-button remove-meal-action"
+              type="button"
+              onClick={onRemove}
+              disabled={disabled}
+              aria-label={`Mahlzeit ${meal.number} für diesen Tag entfernen`}
+            >
+              {removing ? "Wird entfernt …" : "Mahlzeit entfernen"}
+            </button>
+          )}
+        </>
       )}
     </form>
   );

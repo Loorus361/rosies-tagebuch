@@ -1,7 +1,9 @@
 import {
   addExtraMeal,
   createFeedItem,
+  getFeedingDay,
   getFeedingState,
+  removeOpenMeal,
   saveMeal,
   savePlan,
 } from "@/db/feeding";
@@ -30,7 +32,11 @@ export default {
           break;
         case "add_extra_meal":
           await addExtraMeal(ownerId, body.date);
-          break;
+          return Response.json({ ok: true, day: await getFeedingDay(ownerId, String(body.date)) });
+        case "remove_meal": {
+          const date = await removeOpenMeal(ownerId, body.mealId);
+          return Response.json({ ok: true, day: await getFeedingDay(ownerId, date) });
+        }
         default:
           return Response.json({ error: "Unbekannte Aktion." }, { status: 400 });
       }
