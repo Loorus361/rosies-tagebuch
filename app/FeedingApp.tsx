@@ -275,14 +275,19 @@ function SettingsDialog({
   onMutate: (body: Record<string, unknown>, keepSettings?: boolean) => Promise<void>;
   onError: (message: string) => void;
 }) {
+  const selectedTargets = state.date >= state.today ? state.day?.totals : null;
   const [name, setName] = useState("");
   const [kind, setKind] = useState<FeedKind>("wet");
-  const [mealCount, setMealCount] = useState(String(state.currentPlan?.mealCount ?? 3));
+  const [mealCount, setMealCount] = useState(String(state.day?.mealCount ?? state.currentPlan?.mealCount ?? 3));
   const [effectiveDate, setEffectiveDate] = useState(state.date < state.today ? state.today : state.date);
   const [amounts, setAmounts] = useState<Record<string, string>>(() => Object.fromEntries(
     state.feedItems.map((item) => [
       item.id,
-      String(state.currentPlan?.items.find((planItem) => planItem.id === item.id)?.dailyGrams ?? 0),
+      String(
+        selectedTargets?.find((target) => target.id === item.id)?.targetGrams
+        ?? state.currentPlan?.items.find((planItem) => planItem.id === item.id)?.dailyGrams
+        ?? 0
+      ),
     ]),
   ));
   const [saving, setSaving] = useState(false);
@@ -290,9 +295,13 @@ function SettingsDialog({
   useEffect(() => {
     setAmounts((current) => Object.fromEntries(state.feedItems.map((item) => [
       item.id,
-      current[item.id] ?? String(state.currentPlan?.items.find((planItem) => planItem.id === item.id)?.dailyGrams ?? 0),
+      current[item.id] ?? String(
+        selectedTargets?.find((target) => target.id === item.id)?.targetGrams
+        ?? state.currentPlan?.items.find((planItem) => planItem.id === item.id)?.dailyGrams
+        ?? 0
+      ),
     ])));
-  }, [state.feedItems, state.currentPlan]);
+  }, [state.feedItems, state.currentPlan, selectedTargets]);
 
   async function addItem(event: FormEvent) {
     event.preventDefault();
