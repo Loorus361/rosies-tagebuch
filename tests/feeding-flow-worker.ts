@@ -3,6 +3,7 @@ import {
   createFeedItem,
   getFeedingDay,
   getFeedingState,
+  removeCompletedMeal,
   removeOpenMeal,
   saveMeal,
   savePlan,
@@ -28,13 +29,17 @@ export default {
           await savePlan(ownerId, body);
           break;
         case "save_meal":
-          await saveMeal(ownerId, body.mealId, body.actuals);
+          await saveMeal(ownerId, body.mealId, body.actuals, body.completedTime);
           break;
         case "add_extra_meal":
           await addExtraMeal(ownerId, body.date);
           return Response.json({ ok: true, day: await getFeedingDay(ownerId, String(body.date)) });
         case "remove_meal": {
           const date = await removeOpenMeal(ownerId, body.mealId);
+          return Response.json({ ok: true, day: await getFeedingDay(ownerId, date) });
+        }
+        case "delete_meal_entry": {
+          const date = await removeCompletedMeal(ownerId, body.mealId);
           return Response.json({ ok: true, day: await getFeedingDay(ownerId, date) });
         }
         default:

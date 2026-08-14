@@ -93,6 +93,8 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .meal-status.open::before { background: #b39965; }
 .meal-status.done { color: #5e7451; }
 .meal-status.done::before { background: #718563; }
+.meal-status-block { display: grid; justify-items: end; gap: 4px; }
+.meal-time { color: var(--muted); font-size: .72rem; }
 .allocation-list { margin: 10px 0 20px; }
 .allocation-list > div { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .allocation-list dt { display: flex; align-items: center; gap: 9px; color: var(--muted); }
@@ -104,11 +106,16 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .food-dot.dry { background: #a1844c; }
 .meal-action { width: 100%; margin-top: auto; }
 .edit-entry { align-self: flex-start; margin-top: auto; }
+.entry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: auto; }
+.entry-actions .edit-entry { margin-top: 0; }
+.delete-entry { color: #8b4435; }
 .meal-form { margin-top: 18px; }
 .meal-form > p { color: var(--muted); font-size: .84rem; font-weight: 700; }
 .inline-meal-form { display: flex; flex: 1; flex-direction: column; }
 .inline-meal-form .form-actions { margin-top: auto; padding-top: 14px; }
 .remove-meal-action { align-self: flex-start; margin-top: 12px; }
+.correction-time-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; padding: 12px 0 2px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; font-weight: 700; }
+.correction-time-row input { width: 132px; }
 .amount-input-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; }
 .amount-input-row > span:first-child { display: grid; gap: 3px; font-weight: 700; }
 .amount-input-row small { color: var(--muted); font-size: .75rem; font-weight: 400; }

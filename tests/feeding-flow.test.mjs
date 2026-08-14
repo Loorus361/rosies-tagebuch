@@ -219,6 +219,114 @@ test("runs the complete daily feeding flow without changing future defaults", as
   });
   assert.equal(foreignRemoval.response.status, 400);
 
+  const sequenceOwner = "sequence-owner";
+  await post({ action: "create_item", name: "Reihenfolge Nass", kind: "wet" }, sequenceOwner);
+  await post({ action: "create_item", name: "Reihenfolge Trocken", kind: "dry" }, sequenceOwner);
+  let sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  const sequenceWet = sequenceState.feedItems.find((item) => item.kind === "wet");
+  const sequenceDry = sequenceState.feedItems.find((item) => item.kind === "dry");
+  await post({
+    action: "save_plan",
+    effectiveDate: today,
+    mealCount: 3,
+    items: [
+      { feedItemId: sequenceWet.id, dailyGrams: 90 },
+      { feedItemId: sequenceDry.id, dailyGrams: 30 },
+    ],
+  }, sequenceOwner);
+  sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  const firstSequenceMeal = sequenceState.day.meals[0];
+  const originalSecondId = sequenceState.day.meals[1].id;
+  const originalThird = sequenceState.day.meals[2];
+  const beforeAutomaticTimestamp = Date.now();
+  await post({
+    action: "save_meal",
+    mealId: firstSequenceMeal.id,
+    actuals: firstSequenceMeal.allocations.map((item) => ({ feedItemId: item.id, actualGrams: item.plannedGrams })),
+  }, sequenceOwner);
+  sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  const storedAutomaticTimestamp = sequenceState.day.meals.find((meal) => meal.id === firstSequenceMeal.id).completedAt;
+  assert.match(storedAutomaticTimestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+0[12]:00$/);
+  assert.ok(new Date(storedAutomaticTimestamp).valueOf() >= beforeAutomaticTimestamp - 1000);
+  assert.ok(new Date(storedAutomaticTimestamp).valueOf() <= Date.now() + 1000);
+
+  await post({
+    action: "save_meal",
+    mealId: originalThird.id,
+    actuals: originalThird.allocations.map((item) => ({
+      feedItemId: item.id,
+      actualGrams: item.kind === "wet" ? 20 : 5,
+    })),
+  }, sequenceOwner);
+  sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  assert.deepEqual(sequenceState.day.meals.map((meal) => meal.id), [firstSequenceMeal.id, originalThird.id, originalSecondId]);
+  assert.deepEqual(sequenceState.day.meals.map((meal) => meal.number), [1, 2, 3]);
+  assert.deepEqual(sequenceState.day.meals.map((meal) => meal.completed), [true, true, false]);
+  assert.deepEqual(
+    gramsByKind(sequenceState.day.meals[2].allocations, "plannedGrams"),
+    { wet: 40, dry: 15 },
+  );
+
+  const beforeTimeCorrectionTotals = gramsByKind(sequenceState.day.totals, "remainingGrams");
+  const beforeTimeCorrectionSuggestion = gramsByKind(sequenceState.day.meals[2].allocations, "plannedGrams");
+  const movedCompletedMeal = sequenceState.day.meals[1];
+  await post({
+    action: "save_meal",
+    mealId: movedCompletedMeal.id,
+    completedTime: "08:17:43",
+    actuals: movedCompletedMeal.allocations.map((item) => ({ feedItemId: item.id, actualGrams: item.actualGrams })),
+  }, sequenceOwner);
+  sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  assert.equal(sequenceState.day.meals.find((meal) => meal.id === movedCompletedMeal.id).number, 2);
+  assert.deepEqual(gramsByKind(sequenceState.day.totals, "remainingGrams"), beforeTimeCorrectionTotals);
+  assert.deepEqual(
+    gramsByKind(sequenceState.day.meals.find((meal) => !meal.completed).allocations, "plannedGrams"),
+    beforeTimeCorrectionSuggestion,
+  );
+  const correctedTimestamp = await db.prepare(
+    "SELECT completed_at FROM meal_records WHERE id = ?",
+  ).bind(movedCompletedMeal.id).first();
+  assert.equal(correctedTimestamp.completed_at, `${today}T08:17:43.000+02:00`);
+
+  const sequenceWithAdded = await post({ action: "add_extra_meal", date: today }, sequenceOwner);
+  const addedSequenceMeal = sequenceWithAdded.day.meals.find((meal) => meal.extra);
+  const stillOpenId = sequenceWithAdded.day.meals.find((meal) => !meal.completed && !meal.extra).id;
+  await post({
+    action: "save_meal",
+    mealId: addedSequenceMeal.id,
+    actuals: addedSequenceMeal.allocations.map((item) => ({ feedItemId: item.id, actualGrams: item.plannedGrams })),
+  }, sequenceOwner);
+  sequenceState = (await request(`/api/feeding?date=${today}`, { owner: sequenceOwner })).json;
+  assert.equal(sequenceState.day.meals.find((meal) => meal.id === addedSequenceMeal.id).number, 3);
+  assert.equal(sequenceState.day.meals.find((meal) => meal.id === stillOpenId).number, 4);
+  assert.deepEqual(sequenceState.day.meals.map((meal) => meal.number), [1, 2, 3, 4]);
+
+  const deletedEntry = await post({ action: "delete_meal_entry", mealId: movedCompletedMeal.id }, sequenceOwner);
+  assert.ok(!deletedEntry.day.meals.some((meal) => meal.id === movedCompletedMeal.id));
+  assert.deepEqual(deletedEntry.day.meals.map((meal) => meal.number), [1, 2, 3]);
+  assert.equal(deletedEntry.day.mealCount, 3);
+  assert.deepEqual(gramsByKind(deletedEntry.day.totals, "remainingGrams"), { wet: 40, dry: 12.5 });
+  assert.deepEqual(
+    gramsByKind(deletedEntry.day.meals.find((meal) => !meal.completed).allocations, "plannedGrams"),
+    { wet: 40, dry: 12.5 },
+  );
+  const removedRecord = await db.prepare("SELECT id FROM meal_records WHERE id = ?").bind(movedCompletedMeal.id).first();
+  const removedAllocations = await db.prepare(
+    "SELECT COUNT(*) AS count FROM meal_allocations WHERE meal_id = ?",
+  ).bind(movedCompletedMeal.id).first();
+  assert.equal(removedRecord, null);
+  assert.equal(Number(removedAllocations.count), 0);
+  const sequenceFuture = (await request(`/api/feeding?date=${tomorrow}`, { owner: sequenceOwner })).json;
+  assert.equal(sequenceFuture.day.mealCount, 3);
+  assert.equal(sequenceFuture.day.meals.length, 3);
+
+  const foreignEntryDelete = await request("/api/feeding", {
+    method: "POST",
+    owner: "other-owner",
+    body: { action: "delete_meal_entry", mealId: firstSequenceMeal.id },
+  });
+  assert.equal(foreignEntryDelete.response.status, 400);
+
   const isolated = (await request(`/api/feeding?date=${today}`, { owner: "other-owner" })).json;
   assert.deepEqual(isolated.feedItems, []);
   assert.equal(isolated.day, null);

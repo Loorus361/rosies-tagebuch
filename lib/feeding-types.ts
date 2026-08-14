@@ -22,6 +22,7 @@ export type MealView = {
   number: number;
   extra: boolean;
   completed: boolean;
+  completedAt: string | null;
   allocations: MealAllocation[];
 };
 export type DayView = {

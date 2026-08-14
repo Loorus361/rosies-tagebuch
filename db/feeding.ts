@@ -153,16 +153,28 @@ export async function savePlan(
   }
 }
 
-export async function saveMeal(ownerId: string, mealId: unknown, rawActuals: unknown): Promise<void> {
+export async function saveMeal(
+  ownerId: string,
+  mealId: unknown,
+  rawActuals: unknown,
+  rawCompletedTime?: unknown,
+): Promise<void> {
   if (typeof mealId !== "string" || !mealId || !Array.isArray(rawActuals)) {
     throw new Error("Die Mahlzeit konnte nicht gespeichert werden.");
   }
   const db = getD1();
   const meal = await db.prepare(
-    `SELECT m.id, m.day_id, m.meal_number, d.plan_date
+    `SELECT m.id, m.day_id, m.meal_number, m.is_extra, m.completed_at, d.plan_date
      FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
      WHERE m.id = ? AND d.owner_id = ?`,
-  ).bind(mealId, ownerId).first<{ id: string; day_id: string; meal_number: number; plan_date: string }>();
+  ).bind(mealId, ownerId).first<{
+    id: string;
+    day_id: string;
+    meal_number: number;
+    is_extra: number;
+    completed_at: string | null;
+    plan_date: string;
+  }>();
   if (!meal) throw new Error("Diese Mahlzeit gehört nicht zu deinem privaten Bereich.");
   if (meal.plan_date > berlinToday()) {
     throw new Error("Tatsächliche Mengen können erst am jeweiligen Tag eingetragen werden.");
@@ -191,22 +203,40 @@ export async function saveMeal(ownerId: string, mealId: unknown, rawActuals: unk
      FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
      WHERE m.day_id = ? AND m.id != ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
   ).bind(meal.day_id, mealId).all<{ feed_item_id: string; total: number }>();
-  const openMeals = await db.prepare(
-    `SELECT id, meal_number FROM meal_records
-     WHERE day_id = ? AND id != ? AND completed_at IS NULL ORDER BY meal_number`,
-  ).bind(meal.day_id, mealId).all<{ id: string; meal_number: number }>();
+  const otherMeals = await db.prepare(
+    `SELECT id, meal_number, is_extra, completed_at FROM meal_records
+     WHERE day_id = ? AND id != ? ORDER BY meal_number`,
+  ).bind(meal.day_id, mealId).all<MealRow>();
+  const openMeals = otherMeals.results.filter((item) => !item.completed_at);
+  const wasCompleted = Boolean(meal.completed_at);
+  const completedAt = wasCompleted
+    ? rawCompletedTime === undefined
+      ? meal.completed_at!
+      : berlinLocalTimeToIso(meal.plan_date, rawCompletedTime)
+    : berlinTimestampForInstant(new Date());
+  const orderedMeals = wasCompleted ? [] : [
+    ...otherMeals.results.filter((item) => item.completed_at),
+    meal,
+    ...openMeals,
+  ];
   const statements = [
     ...actuals.map((item) => db.prepare(
       `UPDATE meal_allocations SET actual_grams = ? WHERE meal_id = ? AND feed_item_id = ?`,
     ).bind(item.actualGrams, mealId, item.feedItemId)),
-    db.prepare("UPDATE meal_records SET completed_at = ? WHERE id = ?").bind(new Date().toISOString(), mealId),
-    ...openMeals.results.map((item) => db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
+    db.prepare("UPDATE meal_records SET completed_at = ? WHERE id = ?").bind(completedAt, mealId),
+    ...openMeals.map((item) => db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
+    ...orderedMeals.map((item, index) => db.prepare(
+      "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
+    ).bind(-(index + 1), item.id, meal.day_id)),
+    ...orderedMeals.map((item, index) => db.prepare(
+      "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
+    ).bind(index + 1, item.id, meal.day_id)),
   ];
   for (const target of targets.results) {
     const previous = Number(otherActuals.results.find((row) => row.feed_item_id === target.feed_item_id)?.total ?? 0);
     const current = actuals.find((item) => item.feedItemId === target.feed_item_id)?.actualGrams ?? 0;
-    const portions = distribute(Math.max(0, roundGram(target.target_grams - previous - current)), openMeals.results.length);
-    openMeals.results.forEach((openMeal, index) => statements.push(db.prepare(
+    const portions = distribute(Math.max(0, roundGram(target.target_grams - previous - current)), openMeals.length);
+    openMeals.forEach((openMeal, index) => statements.push(db.prepare(
       `INSERT INTO meal_allocations
        (meal_id, feed_item_id, item_name, feed_kind, planned_grams, actual_grams)
        VALUES (?, ?, ?, ?, ?, NULL)`,
@@ -269,6 +299,14 @@ export async function addExtraMeal(ownerId: string, rawDate: unknown): Promise<v
 }
 
 export async function removeOpenMeal(ownerId: string, rawMealId: unknown): Promise<string> {
+  return removeMealRecord(ownerId, rawMealId, false);
+}
+
+export async function removeCompletedMeal(ownerId: string, rawMealId: unknown): Promise<string> {
+  return removeMealRecord(ownerId, rawMealId, true);
+}
+
+async function removeMealRecord(ownerId: string, rawMealId: unknown, completed: boolean): Promise<string> {
   if (typeof rawMealId !== "string" || !rawMealId) {
     throw new Error("Die Mahlzeit konnte nicht entfernt werden.");
   }
@@ -284,8 +322,11 @@ export async function removeOpenMeal(ownerId: string, rawMealId: unknown): Promi
     plan_date: string;
   }>();
   if (!meal) throw new Error("Diese Mahlzeit gehört nicht zu deinem privaten Bereich.");
-  if (meal.completed_at) {
+  if (!completed && meal.completed_at) {
     throw new Error("Eine bereits gefütterte Mahlzeit bleibt als Tagebucheintrag erhalten.");
+  }
+  if (completed && !meal.completed_at) {
+    throw new Error("Diese Mahlzeit ist noch offen. Verwende dafür ‚Mahlzeit entfernen‘.");
   }
   if (meal.plan_date > berlinToday()) {
     throw new Error("Mahlzeiten können erst am ausgewählten Tag entfernt werden.");
@@ -299,8 +340,8 @@ export async function removeOpenMeal(ownerId: string, rawMealId: unknown): Promi
     db.prepare(
       `SELECT a.feed_item_id, COALESCE(SUM(a.actual_grams), 0) AS total
        FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
-       WHERE m.day_id = ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
-    ).bind(meal.day_id).all<{ feed_item_id: string; total: number }>(),
+       WHERE m.day_id = ? AND m.id != ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
+    ).bind(meal.day_id, meal.id).all<{ feed_item_id: string; total: number }>(),
     db.prepare(
       `SELECT id, meal_number, is_extra, completed_at FROM meal_records
        WHERE day_id = ? AND id != ? ORDER BY meal_number`,
@@ -308,7 +349,7 @@ export async function removeOpenMeal(ownerId: string, rawMealId: unknown): Promi
   ]);
   const openMeals = remainingMeals.results.filter((item) => !item.completed_at);
   const statements = [
-    db.prepare("DELETE FROM meal_records WHERE id = ? AND day_id = ? AND completed_at IS NULL")
+    db.prepare("DELETE FROM meal_records WHERE id = ? AND day_id = ?")
       .bind(meal.id, meal.day_id),
     ...remainingMeals.results.map((item, index) => db.prepare(
       "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
@@ -414,6 +455,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
     number: meal.meal_number,
     extra: Boolean(meal.is_extra),
     completed: Boolean(meal.completed_at),
+    completedAt: meal.completed_at,
     allocations: allocations.results.filter((row) => row.meal_id === meal.id).map((row): MealAllocation => ({
       id: row.feed_item_id,
       name: row.item_name,
@@ -533,6 +575,7 @@ function virtualDay(date: string, plan: PlanView): DayView {
     number: index + 1,
     extra: false,
     completed: false,
+    completedAt: null,
     allocations: plan.items.map((item) => ({
       id: item.id,
       name: item.name,
@@ -565,4 +608,69 @@ function distribute(total: number, count: number): number[] {
 
 function roundGram(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function berlinLocalTimeToIso(date: string, rawTime: unknown): string {
+  if (typeof rawTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(rawTime)) {
+    throw new Error("Bitte eine gültige Uhrzeit wählen.");
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute, second = 0] = rawTime.split(":").map(Number);
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  for (const offsetHours of [2, 1]) {
+    const candidate = new Date(Date.UTC(year, month - 1, day, hour - offsetHours, minute, second));
+    const parts = Object.fromEntries(formatter.formatToParts(candidate).map((part) => [part.type, part.value]));
+    if (
+      Number(parts.year) === year
+      && Number(parts.month) === month
+      && Number(parts.day) === day
+      && Number(parts.hour) === hour
+      && Number(parts.minute) === minute
+      && Number(parts.second) === second
+    ) {
+      return `${date}T${padTime(hour)}:${padTime(minute)}:${padTime(second)}.000+0${offsetHours}:00`;
+    }
+  }
+  throw new Error("Diese Uhrzeit ist an dem gewählten Tag nicht verfügbar.");
+}
+
+function berlinTimestampForInstant(instant: Date): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(instant).map((part) => [part.type, part.value]));
+  const instantWithoutMillis = Math.floor(instant.valueOf() / 1000) * 1000;
+  const localAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  const offsetMinutes = Math.round((localAsUtc - instantWithoutMillis) / 60_000);
+  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const millis = String(instant.getUTCMilliseconds()).padStart(3, "0");
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${millis}${offsetSign}${padTime(Math.floor(absoluteOffset / 60))}:${padTime(absoluteOffset % 60)}`;
+}
+
+function padTime(value: number): string {
+  return String(value).padStart(2, "0");
 }

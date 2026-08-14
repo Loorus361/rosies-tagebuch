@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { formatExactMealTime, formatRoundedMealTime } from "@/lib/feeding-time";
 import type { FeedKind, FeedingState, MealView } from "@/lib/feeding-types";
 
 type Props = { displayName: string };
@@ -72,7 +73,12 @@ export function FeedingApp({ displayName }: Props) {
     setEditor({ mealId: meal.id });
   }
 
-  async function submitMeal(event: FormEvent, meal: MealView, values: Record<string, string>) {
+  async function submitMeal(
+    event: FormEvent,
+    meal: MealView,
+    values: Record<string, string>,
+    completedTime?: string,
+  ) {
     event.preventDefault();
     setSavingMealId(meal.id);
     try {
@@ -83,6 +89,7 @@ export function FeedingApp({ displayName }: Props) {
           feedItemId: item.id,
           actualGrams: values[item.id],
         })),
+        completedTime,
       });
       setEditor(null);
     } catch (saveError) {
@@ -107,6 +114,22 @@ export function FeedingApp({ displayName }: Props) {
     setRemovingMealId(meal.id);
     try {
       await mutate({ action: "remove_meal", mealId: meal.id });
+    } catch (removeError) {
+      setError(messageOf(removeError));
+    } finally {
+      setRemovingMealId(null);
+    }
+  }
+
+  async function deleteMealEntry(meal: MealView) {
+    const confirmed = window.confirm(
+      "Diesen Fütterungseintrag vollständig entfernen? Die eingetragenen Mengen und die Uhrzeit werden gelöscht.",
+    );
+    if (!confirmed) return;
+    setRemovingMealId(meal.id);
+    try {
+      await mutate({ action: "delete_meal_entry", mealId: meal.id });
+      setEditor(null);
     } catch (removeError) {
       setError(messageOf(removeError));
     } finally {
@@ -210,9 +233,14 @@ export function FeedingApp({ displayName }: Props) {
                           <span className="meal-number">{String(meal.number).padStart(2, "0")}</span>
                           <h3>Mahlzeit {meal.number}</h3>
                         </div>
-                        <span className={`meal-status ${meal.completed ? "done" : "open"}`}>
-                          {meal.completed ? "Eingetragen" : "Offen"}
-                        </span>
+                        <div className="meal-status-block">
+                          <span className={`meal-status ${meal.completed ? "done" : "open"}`}>
+                            {meal.completed ? "Eingetragen" : "Offen"}
+                          </span>
+                          {meal.completedAt && (
+                            <time className="meal-time" dateTime={meal.completedAt}>{formatRoundedMealTime(meal.completedAt)}</time>
+                          )}
+                        </div>
                       </div>
 
                       {!meal.completed ? (
@@ -224,7 +252,7 @@ export function FeedingApp({ displayName }: Props) {
                           previewOnly={Boolean(state.day?.virtual)}
                           removing={removingMealId === meal.id}
                           onRemove={() => void removeMeal(meal)}
-                          onSubmit={(event, values) => void submitMeal(event, meal, values)}
+                          onSubmit={(event, values, completedTime) => void submitMeal(event, meal, values, completedTime)}
                         />
                       ) : editor?.mealId === meal.id ? (
                         <MealAmountForm
@@ -233,7 +261,7 @@ export function FeedingApp({ displayName }: Props) {
                           saving={savingMealId === meal.id}
                           correction
                           onCancel={() => setEditor(null)}
-                          onSubmit={(event, values) => void submitMeal(event, meal, values)}
+                          onSubmit={(event, values, completedTime) => void submitMeal(event, meal, values, completedTime)}
                         />
                       ) : (
                         <>
@@ -252,7 +280,24 @@ export function FeedingApp({ displayName }: Props) {
                               </div>
                             ))}
                           </dl>
-                          <button className="text-button edit-entry" type="button" onClick={() => openMeal(meal)}>Eintrag korrigieren</button>
+                          <div className="entry-actions">
+                            <button
+                              className="text-button edit-entry"
+                              type="button"
+                              onClick={() => openMeal(meal)}
+                              disabled={removingMealId === meal.id}
+                            >
+                              Eintrag korrigieren
+                            </button>
+                            <button
+                              className="text-button delete-entry"
+                              type="button"
+                              onClick={() => void deleteMealEntry(meal)}
+                              disabled={removingMealId === meal.id}
+                            >
+                              {removingMealId === meal.id ? "Wird entfernt …" : "Eintrag entfernen"}
+                            </button>
+                          </div>
                         </>
                       )}
                     </article>
@@ -323,14 +368,15 @@ function MealAmountForm({
   removing?: boolean;
   onCancel?: () => void;
   onRemove?: () => void;
-  onSubmit: (event: FormEvent, values: Record<string, string>) => void;
+  onSubmit: (event: FormEvent, values: Record<string, string>, completedTime?: string) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(
     meal.allocations.map((item) => [item.id, String(item.actualGrams ?? item.plannedGrams)]),
   ));
+  const [completedTime, setCompletedTime] = useState(() => formatExactMealTime(meal.completedAt));
   return (
-    <form className="meal-form inline-meal-form" onSubmit={(event) => onSubmit(event, values)}>
-      <p>{previewOnly ? "Vorgeschlagene Menge" : correction ? "Tatsächliche Menge korrigieren" : "Vorschlag direkt anpassen"}</p>
+    <form className="meal-form inline-meal-form" onSubmit={(event) => onSubmit(event, values, correction ? completedTime : undefined)}>
+      <p>{previewOnly ? "Vorgeschlagene Menge" : correction ? "Mengen und Uhrzeit korrigieren" : "Vorschlag direkt anpassen"}</p>
       {meal.allocations.map((item) => (
         <label className="amount-input-row" key={item.id}>
           <span>
@@ -353,6 +399,20 @@ function MealAmountForm({
           </span>
         </label>
       ))}
+      {correction && (
+        <label className="correction-time-row">
+          <span>Uhrzeit</span>
+          <input
+            type="time"
+            step="1"
+            value={completedTime}
+            onChange={(event) => setCompletedTime(event.target.value)}
+            aria-label="Tatsächliche Fütterungszeit"
+            disabled={disabled}
+            required
+          />
+        </label>
+      )}
       {!previewOnly && (
         <>
           <div className="form-actions">

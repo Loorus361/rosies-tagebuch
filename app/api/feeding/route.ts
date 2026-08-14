@@ -7,6 +7,7 @@ import {
   createFeedItem,
   getFeedingDay,
   getFeedingState,
+  removeCompletedMeal,
   removeOpenMeal,
   saveMeal,
   savePlan,
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
         await savePlan(user.userId, body);
         break;
       case "save_meal":
-        await saveMeal(user.userId, body.mealId, body.actuals);
+        await saveMeal(user.userId, body.mealId, body.actuals, body.completedTime);
         break;
       case "add_extra_meal":
         assertDate(body.date);
@@ -47,6 +48,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, body.date) });
       case "remove_meal": {
         const date = await removeOpenMeal(user.userId, body.mealId);
+        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
+      }
+      case "delete_meal_entry": {
+        const date = await removeCompletedMeal(user.userId, body.mealId);
         return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
       }
       default:
