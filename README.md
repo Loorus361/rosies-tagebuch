@@ -1,6 +1,6 @@
-# Rosis Tagebuch
+# Rosies Tagebuch
 
-Private ChatGPT-Sites-App für Rosis Fütterungsplanung und Tageshistorie.
+Private ChatGPT-Sites-App für Rosies Fütterungsplanung und Tageshistorie.
 
 ## Prerequisites
 

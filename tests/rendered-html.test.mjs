@@ -34,11 +34,11 @@ test("server-renders the private feeding diary shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Rosis Tagebuch · Fütterung<\/title>/i);
-  assert.match(html, /Rosis Tagebuch/);
+  assert.match(html, /<title>Rosies Tagebuch · Fütterung<\/title>/i);
+  assert.match(html, /Rosies Tagebuch/);
   assert.match(html, /Fütterung/);
   assert.match(html, /Privat für (?:<!-- -->)?Carlos/);
-  assert.match(html, /Rosis Fütterung wird geladen/);
+  assert.match(html, /Rosies Fütterung wird geladen/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 

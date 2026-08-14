@@ -165,7 +165,7 @@ export function FeedingApp({ displayName }: Props) {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Rosis Tagebuch</p>
+          <p className="eyebrow">Rosies Tagebuch</p>
           <h1>Fütterung</h1>
         </div>
         <div className="account-chip" title={`Angemeldet als ${displayName}`}>
@@ -177,7 +177,7 @@ export function FeedingApp({ displayName }: Props) {
         <div>
           <p className="date-kicker">{isToday ? "Heute" : state?.day?.virtual ? "Vorschau" : "Tagebuch"}</p>
           <h2 id="day-title">{selectedLabel}</h2>
-          <p className="day-subline">{isToday ? "Ein ruhiger Blick auf Rosis Tag." : "Plan und Einträge dieses Tages."}</p>
+          <p className="day-subline">{isToday ? "Ein ruhiger Blick auf Rosies Tag." : "Plan und Einträge dieses Tages."}</p>
         </div>
         <div className="date-controls" aria-label="Tag auswählen">
           <button className="icon-button" type="button" onClick={() => moveDay(-1)} aria-label="Vorheriger Tag">←</button>
@@ -806,7 +806,7 @@ function SettingsDialog({
 }
 
 function LoadingDay() {
-  return <section className="loading-card" aria-live="polite"><span className="loading-pulse" /> Rosis Fütterung wird geladen …</section>;
+  return <section className="loading-card" aria-live="polite"><span className="loading-pulse" /> Rosies Fütterung wird geladen …</section>;
 }
 
 function localDate() {

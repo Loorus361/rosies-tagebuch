@@ -13,21 +13,21 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost";
   const imageUrl = `${protocol}://${host}/og.png`;
-  const title = "Rosis Tagebuch · Fütterung";
-  const description = "Rosis privates Fütterungstagebuch mit Tagesplan und dauerhaftem Verlauf.";
+  const title = "Rosies Tagebuch · Fütterung";
+  const description = "Rosies privates Fütterungstagebuch mit Tagesplan und dauerhaftem Verlauf.";
   return {
     title,
     description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
-      title: "Rosis Tagebuch",
+      title: "Rosies Tagebuch",
       description,
       type: "website",
-      images: [{ url: imageUrl, width: 1731, height: 909, alt: "Rosis Tagebuch – Fütterung im Blick" }],
+      images: [{ url: imageUrl, width: 1731, height: 909, alt: "Rosies Tagebuch – Fütterung im Blick" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Rosis Tagebuch",
+      title: "Rosies Tagebuch",
       description,
       images: [imageUrl],
     },
