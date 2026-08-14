@@ -1,12 +1,14 @@
 import {
   addExtraMeal,
   createFeedItem,
+  createMedication,
   getFeedingDay,
   getFeedingState,
   removeCompletedMeal,
   removeOpenMeal,
   saveMeal,
   savePlan,
+  setMedicationGiven,
 } from "@/db/feeding";
 
 export default {
@@ -25,6 +27,9 @@ export default {
         case "create_item":
           await createFeedItem(ownerId, body.name, body.kind);
           break;
+        case "create_medication":
+          await createMedication(ownerId, body.name);
+          break;
         case "save_plan":
           await savePlan(ownerId, body);
           break;
@@ -40,6 +45,10 @@ export default {
         }
         case "delete_meal_entry": {
           const date = await removeCompletedMeal(ownerId, body.mealId);
+          return Response.json({ ok: true, day: await getFeedingDay(ownerId, date) });
+        }
+        case "set_medication_given": {
+          const date = await setMedicationGiven(ownerId, body.mealId, body.medicationId, body.given);
           return Response.json({ ok: true, day: await getFeedingDay(ownerId, date) });
         }
         default:

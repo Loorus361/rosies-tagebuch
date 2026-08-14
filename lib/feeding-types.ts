@@ -1,12 +1,25 @@
 export type FeedKind = "wet" | "dry";
 
 export type FeedItem = { id: string; name: string; kind: FeedKind };
+export type Medication = { id: string; name: string };
+export type PlanMedication = Medication & {
+  targetAmount: string;
+  unit: string;
+  mealNumbers: number[];
+};
+export type MealMedication = Medication & {
+  targetAmount: string;
+  unit: string;
+  given: boolean;
+  givenAt: string | null;
+};
 export type PlanItem = FeedItem & { dailyGrams: number };
 export type PlanView = {
   id: string;
   effectiveDate: string;
   mealCount: number;
   items: PlanItem[];
+  medications: PlanMedication[];
 };
 export type DayTotal = FeedItem & {
   targetGrams: number;
@@ -24,6 +37,7 @@ export type MealView = {
   completed: boolean;
   completedAt: string | null;
   allocations: MealAllocation[];
+  medications: MealMedication[];
 };
 export type DayView = {
   id: string | null;
@@ -38,6 +52,7 @@ export type FeedingState = {
   date: string;
   today: string;
   feedItems: FeedItem[];
+  medications: Medication[];
   currentPlan: PlanView | null;
   day: DayView | null;
 };

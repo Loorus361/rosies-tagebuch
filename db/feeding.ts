@@ -5,8 +5,10 @@ import type {
   FeedItem,
   FeedKind,
   FeedingState,
+  MealMedication,
   MealAllocation,
   MealView,
+  Medication,
   PlanView,
 } from "@/lib/feeding-types";
 
@@ -21,6 +23,21 @@ type AllocationRow = {
   feed_kind: FeedKind;
   planned_grams: number;
   actual_grams: number | null;
+};
+type MedicationDoseRow = {
+  medication_id: string;
+  medication_name: string;
+  target_amount: string;
+  unit: string;
+  meal_number: number;
+};
+type MealMedicationRow = {
+  meal_id: string;
+  medication_id: string;
+  medication_name: string;
+  target_amount: string;
+  unit: string;
+  given_at: string | null;
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -53,6 +70,11 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
      WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`,
   ).bind(ownerId).all<{ id: string; name: string; kind: FeedKind }>();
   const feedItems: FeedItem[] = feedRows.results;
+  const medicationRows = await db.prepare(
+    `SELECT id, name FROM medications
+     WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`,
+  ).bind(ownerId).all<Medication>();
+  const medications: Medication[] = medicationRows.results;
   const currentPlan = await readPlan(ownerId, today);
   const selectedPlan = await readPlan(ownerId, selectedDate);
   let day: DayView | null = null;
@@ -65,7 +87,7 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
   } else if (selectedDate <= today) {
     day = await readDay(ownerId, selectedDate);
   }
-  return { date: selectedDate, today, feedItems, currentPlan, day };
+  return { date: selectedDate, today, feedItems, medications, currentPlan, day };
 }
 
 export async function getFeedingDay(ownerId: string, selectedDate: string): Promise<DayView | null> {
@@ -89,9 +111,24 @@ export async function createFeedItem(ownerId: string, rawName: unknown, rawKind:
   }
 }
 
+export async function createMedication(ownerId: string, rawName: unknown): Promise<void> {
+  const name = normalizeShortText(rawName, 80);
+  if (!name) throw new Error("Der Medikamentenname muss zwischen 1 und 80 Zeichen lang sein.");
+  try {
+    await getD1().prepare(
+      `INSERT INTO medications (id, owner_id, name, created_at) VALUES (?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), ownerId, name, new Date().toISOString()).run();
+  } catch (error) {
+    if (String(error).toLowerCase().includes("unique")) {
+      throw new Error("Ein Medikament mit diesem Namen existiert bereits.");
+    }
+    throw error;
+  }
+}
+
 export async function savePlan(
   ownerId: string,
-  input: { effectiveDate?: unknown; mealCount?: unknown; items?: unknown },
+  input: { effectiveDate?: unknown; mealCount?: unknown; items?: unknown; medications?: unknown },
 ): Promise<void> {
   assertDate(input.effectiveDate);
   const effectiveDate = input.effectiveDate;
@@ -118,15 +155,55 @@ export async function savePlan(
   }
   const ids = [...new Set(requested.map((item) => item.feedItemId))];
   if (ids.length !== requested.length) throw new Error("Ein Futterbaustein wurde doppelt übermittelt.");
+  const rawMedications = input.medications === undefined ? [] : input.medications;
+  if (!Array.isArray(rawMedications)) throw new Error("Bitte die Medikamentenvorgaben prüfen.");
+  const requestedMedications = rawMedications.map((entry) => {
+    const item = entry as {
+      medicationId?: unknown;
+      targetAmount?: unknown;
+      unit?: unknown;
+      mealNumbers?: unknown;
+    };
+    const medicationId = typeof item.medicationId === "string" ? item.medicationId : "";
+    const targetAmount = normalizeShortText(item.targetAmount, 30);
+    const unit = normalizeShortText(item.unit, 30);
+    if (!medicationId || !targetAmount || !unit || !Array.isArray(item.mealNumbers)) {
+      throw new Error("Bitte Name, Sollmenge, Einheit und mindestens eine Mahlzeit je Medikament angeben.");
+    }
+    const mealNumbers = [...new Set(item.mealNumbers.map(Number))];
+    if (
+      mealNumbers.length === 0
+      || mealNumbers.some((number) => !Number.isInteger(number) || number < 1 || number > mealCount)
+    ) {
+      throw new Error("Jede Medikamentengabe muss einer regulären Mahlzeit zugeordnet sein.");
+    }
+    return { medicationId, targetAmount, unit, mealNumbers: mealNumbers.sort((a, b) => a - b) };
+  });
+  if (new Set(requestedMedications.map((item) => item.medicationId)).size !== requestedMedications.length) {
+    throw new Error("Ein Medikament wurde doppelt übermittelt.");
+  }
   const db = getD1();
   if (effectiveDate === today) {
-    const completed = await db.prepare(
-      `SELECT COALESCE(MAX(m.meal_number), 0) AS highest
-       FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
-       WHERE d.owner_id = ? AND d.plan_date = ? AND m.is_extra = 0 AND m.completed_at IS NOT NULL`,
-    ).bind(ownerId, today).first<{ highest: number }>();
-    if (mealCount < Number(completed?.highest ?? 0)) {
-      throw new Error(`Heute ist Mahlzeit ${completed?.highest} bereits abgeschlossen. Wähle mindestens ${completed?.highest} Mahlzeiten.`);
+    const [completed, medicationGiven] = await Promise.all([
+      db.prepare(
+        `SELECT COALESCE(MAX(m.meal_number), 0) AS highest
+         FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
+         WHERE d.owner_id = ? AND d.plan_date = ? AND m.is_extra = 0 AND m.completed_at IS NOT NULL`,
+      ).bind(ownerId, today).first<{ highest: number }>(),
+      db.prepare(
+        `SELECT COALESCE(MAX(m.meal_number), 0) AS highest
+         FROM meal_records m
+         JOIN feeding_days d ON d.id = m.day_id
+         JOIN meal_medications mm ON mm.meal_id = m.id
+         WHERE d.owner_id = ? AND d.plan_date = ? AND m.is_extra = 0 AND mm.given_at IS NOT NULL`,
+      ).bind(ownerId, today).first<{ highest: number }>(),
+    ]);
+    const protectedMealNumber = Math.max(
+      Number(completed?.highest ?? 0),
+      Number(medicationGiven?.highest ?? 0),
+    );
+    if (mealCount < protectedMealNumber) {
+      throw new Error(`Heute enthält Mahlzeit ${protectedMealNumber} bereits einen Eintrag. Wähle mindestens ${protectedMealNumber} Mahlzeiten.`);
     }
   }
   const ownedRows = await db.prepare(
@@ -134,6 +211,15 @@ export async function savePlan(
   ).bind(ownerId, ...ids).all<{ id: string; name: string; kind: FeedKind }>();
   if (ownedRows.results.length !== ids.length) {
     throw new Error("Mindestens ein Futterbaustein gehört nicht zu diesem privaten Bereich.");
+  }
+  const medicationIds = requestedMedications.map((item) => item.medicationId);
+  const ownedMedications = medicationIds.length === 0
+    ? { results: [] as Medication[] }
+    : await db.prepare(
+      `SELECT id, name FROM medications WHERE owner_id = ? AND id IN (${medicationIds.map(() => "?").join(",")})`,
+    ).bind(ownerId, ...medicationIds).all<Medication>();
+  if (ownedMedications.results.length !== medicationIds.length) {
+    throw new Error("Mindestens ein Medikament gehört nicht zu diesem privaten Bereich.");
   }
   const positiveItems = requested.filter((item) => item.dailyGrams > 0).map((item) => ({
     ...ownedRows.results.find((row) => row.id === item.feedItemId)!,
@@ -147,9 +233,31 @@ export async function savePlan(
     ...positiveItems.map((item) => db.prepare(
       `INSERT INTO plan_version_items (plan_version_id, feed_item_id, daily_grams) VALUES (?, ?, ?)`,
     ).bind(versionId, item.id, item.dailyGrams)),
+    ...requestedMedications.flatMap((item) => item.mealNumbers.map((mealNumber) => db.prepare(
+      `INSERT INTO plan_version_medication_doses
+       (plan_version_id, medication_id, medication_name, target_amount, unit, meal_number)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      versionId,
+      item.medicationId,
+      ownedMedications.results.find((medication) => medication.id === item.medicationId)!.name,
+      item.targetAmount,
+      item.unit,
+      mealNumber,
+    ))),
   ]);
   if (effectiveDate === today) {
-    await applyPlanToToday(ownerId, today, versionId, mealCount, positiveItems);
+    await applyPlanToToday(
+      ownerId,
+      today,
+      versionId,
+      mealCount,
+      positiveItems,
+      requestedMedications.map((item) => ({
+        ...item,
+        name: ownedMedications.results.find((medication) => medication.id === item.medicationId)!.name,
+      })),
+    );
   }
 }
 
@@ -245,6 +353,44 @@ export async function saveMeal(
   await db.batch(statements);
 }
 
+export async function setMedicationGiven(
+  ownerId: string,
+  rawMealId: unknown,
+  rawMedicationId: unknown,
+  rawGiven: unknown,
+): Promise<string> {
+  if (
+    typeof rawMealId !== "string"
+    || !rawMealId
+    || typeof rawMedicationId !== "string"
+    || !rawMedicationId
+    || typeof rawGiven !== "boolean"
+  ) {
+    throw new Error("Die Medikamentengabe konnte nicht gespeichert werden.");
+  }
+  const db = getD1();
+  const dose = await db.prepare(
+    `SELECT d.plan_date
+     FROM meal_medications mm
+     JOIN meal_records m ON m.id = mm.meal_id
+     JOIN feeding_days d ON d.id = m.day_id
+     WHERE mm.meal_id = ? AND mm.medication_id = ? AND d.owner_id = ?`,
+  ).bind(rawMealId, rawMedicationId, ownerId).first<{ plan_date: string }>();
+  if (!dose) throw new Error("Diese Medikamentengabe gehört nicht zu deinem privaten Bereich.");
+  if (dose.plan_date > berlinToday()) {
+    throw new Error("Eine Medikamentengabe kann erst am jeweiligen Tag dokumentiert werden.");
+  }
+  await db.prepare(
+    `UPDATE meal_medications SET given_at = ?
+     WHERE meal_id = ? AND medication_id = ?
+       AND EXISTS (
+         SELECT 1 FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
+         WHERE m.id = meal_medications.meal_id AND d.owner_id = ?
+       )`,
+  ).bind(rawGiven ? berlinTimestampForInstant(new Date()) : null, rawMealId, rawMedicationId, ownerId).run();
+  return dose.plan_date;
+}
+
 export async function addExtraMeal(ownerId: string, rawDate: unknown): Promise<void> {
   assertDate(rawDate);
   const date = rawDate;
@@ -331,6 +477,15 @@ async function removeMealRecord(ownerId: string, rawMealId: unknown, completed: 
   if (meal.plan_date > berlinToday()) {
     throw new Error("Mahlzeiten können erst am ausgewählten Tag entfernt werden.");
   }
+  const documentedMedication = await db.prepare(
+    `SELECT medication_name FROM meal_medications
+     WHERE meal_id = ? AND given_at IS NOT NULL LIMIT 1`,
+  ).bind(meal.id).first<{ medication_name: string }>();
+  if (documentedMedication) {
+    throw new Error(
+      `Für diese Mahlzeit ist „${documentedMedication.medication_name}“ bereits als gegeben dokumentiert. Nimm diese Medikamentengabe zuerst zurück.`,
+    );
+  }
 
   const [targets, actuals, remainingMeals] = await Promise.all([
     db.prepare(
@@ -381,11 +536,19 @@ async function readPlan(ownerId: string, date: string): Promise<PlanView | null>
      ORDER BY effective_date DESC, created_at DESC, id DESC LIMIT 1`,
   ).bind(ownerId, date).first<VersionRow>();
   if (!version) return null;
-  const rows = await db.prepare(
-    `SELECT f.id, f.name, f.kind, p.daily_grams
-     FROM plan_version_items p JOIN feed_items f ON f.id = p.feed_item_id
-     WHERE p.plan_version_id = ? ORDER BY f.created_at ASC`,
-  ).bind(version.id).all<{ id: string; name: string; kind: FeedKind; daily_grams: number }>();
+  const [rows, medicationDoses] = await Promise.all([
+    db.prepare(
+      `SELECT f.id, f.name, f.kind, p.daily_grams
+       FROM plan_version_items p JOIN feed_items f ON f.id = p.feed_item_id
+       WHERE p.plan_version_id = ? ORDER BY f.created_at ASC`,
+    ).bind(version.id).all<{ id: string; name: string; kind: FeedKind; daily_grams: number }>(),
+    db.prepare(
+      `SELECT medication_id, medication_name, target_amount, unit, meal_number
+       FROM plan_version_medication_doses
+       WHERE plan_version_id = ? ORDER BY rowid`,
+    ).bind(version.id).all<MedicationDoseRow>(),
+  ]);
+  const medicationIds = [...new Set(medicationDoses.results.map((dose) => dose.medication_id))];
   return {
     id: version.id,
     effectiveDate: version.effective_date,
@@ -393,6 +556,19 @@ async function readPlan(ownerId: string, date: string): Promise<PlanView | null>
     items: rows.results.map((row) => ({
       id: row.id, name: row.name, kind: row.kind, dailyGrams: Number(row.daily_grams),
     })),
+    medications: medicationIds.map((medicationId) => {
+      const dose = medicationDoses.results.find((item) => item.medication_id === medicationId)!;
+      return {
+        id: medicationId,
+        name: dose.medication_name,
+        targetAmount: dose.target_amount,
+        unit: dose.unit,
+        mealNumbers: medicationDoses.results
+          .filter((item) => item.medication_id === medicationId)
+          .map((item) => item.meal_number)
+          .sort((a, b) => a - b),
+      };
+    }),
   };
 }
 
@@ -417,6 +593,17 @@ async function ensureDay(ownerId: string, date: string, plan: PlanView): Promise
     ...mealIds.map((id, index) => db.prepare(
       `INSERT OR IGNORE INTO meal_records (id, day_id, meal_number, is_extra, completed_at) VALUES (?, ?, ?, 0, NULL)`,
     ).bind(id, dayId, index + 1)),
+    ...plan.medications.flatMap((medication) => medication.mealNumbers.map((mealNumber) => db.prepare(
+      `INSERT OR IGNORE INTO meal_medications
+       (meal_id, medication_id, medication_name, target_amount, unit, given_at)
+       VALUES (?, ?, ?, ?, ?, NULL)`,
+    ).bind(
+      mealIds[mealNumber - 1],
+      medication.id,
+      medication.name,
+      medication.targetAmount,
+      medication.unit,
+    ))),
   ];
   plan.items.forEach((item) => {
     const portions = distribute(item.dailyGrams, plan.mealCount);
@@ -437,7 +624,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
      WHERE d.owner_id = ? AND d.plan_date = ?`,
   ).bind(ownerId, date).first<DayRow>();
   if (!day) return null;
-  const [dayItems, meals, allocations] = await Promise.all([
+  const [dayItems, meals, allocations, medicationRows] = await Promise.all([
     db.prepare(
       `SELECT feed_item_id, item_name, feed_kind, target_grams FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
     ).bind(day.id).all<DayItemRow>(),
@@ -449,6 +636,11 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
        FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
        WHERE m.day_id = ? ORDER BY m.meal_number, a.rowid`,
     ).bind(day.id).all<AllocationRow>(),
+    db.prepare(
+      `SELECT mm.meal_id, mm.medication_id, mm.medication_name, mm.target_amount, mm.unit, mm.given_at
+       FROM meal_medications mm JOIN meal_records m ON m.id = mm.meal_id
+       WHERE m.day_id = ? ORDER BY m.meal_number, mm.rowid`,
+    ).bind(day.id).all<MealMedicationRow>(),
   ]);
   const mealViews: MealView[] = meals.results.map((meal) => ({
     id: meal.id,
@@ -462,6 +654,14 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
       kind: row.feed_kind,
       plannedGrams: Number(row.planned_grams),
       actualGrams: row.actual_grams == null ? null : Number(row.actual_grams),
+    })),
+    medications: medicationRows.results.filter((row) => row.meal_id === meal.id).map((row): MealMedication => ({
+      id: row.medication_id,
+      name: row.medication_name,
+      targetAmount: row.target_amount,
+      unit: row.unit,
+      given: Boolean(row.given_at),
+      givenAt: row.given_at,
     })),
   }));
   const metadata = new Map<string, FeedItem>();
@@ -495,6 +695,13 @@ async function applyPlanToToday(
   versionId: string,
   mealCount: number,
   planItems: Array<{ id: string; name: string; kind: FeedKind; dailyGrams: number }>,
+  planMedications: Array<{
+    medicationId: string;
+    name: string;
+    targetAmount: string;
+    unit: string;
+    mealNumbers: number[];
+  }>,
 ): Promise<void> {
   const db = getD1();
   const day = await db.prepare(
@@ -556,6 +763,18 @@ async function applyPlanToToday(
     ).bind(item.finalNumber, item.id, day.id)),
     ...open.filter((item) => !missing.some((newItem) => newItem.id === item.id)).map((item) =>
       db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
+    ...open.map((item) => db.prepare(
+      "DELETE FROM meal_medications WHERE meal_id = ? AND given_at IS NULL",
+    ).bind(item.id)),
+    ...planMedications.flatMap((medication) => medication.mealNumbers.flatMap((mealNumber) => {
+      const meal = finalStandards[mealNumber - 1];
+      if (!meal || meal.completed_at) return [];
+      return [db.prepare(
+        `INSERT OR IGNORE INTO meal_medications
+         (meal_id, medication_id, medication_name, target_amount, unit, given_at)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+      ).bind(meal.id, medication.medicationId, medication.name, medication.targetAmount, medication.unit)];
+    })),
   ];
   for (const item of planItems) {
     const actual = Number(completedActuals.results.find((row) => row.feed_item_id === item.id)?.total ?? 0);
@@ -583,6 +802,14 @@ function virtualDay(date: string, plan: PlanView): DayView {
       plannedGrams: distribute(item.dailyGrams, plan.mealCount)[index],
       actualGrams: null,
     })),
+    medications: plan.medications.filter((medication) => medication.mealNumbers.includes(index + 1)).map((medication) => ({
+      id: medication.id,
+      name: medication.name,
+      targetAmount: medication.targetAmount,
+      unit: medication.unit,
+      given: false,
+      givenAt: null,
+    })),
   }));
   return {
     id: null,
@@ -608,6 +835,12 @@ function distribute(total: number, count: number): number[] {
 
 function roundGram(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function normalizeShortText(value: unknown, maxLength: number): string {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length <= maxLength ? normalized : "";
 }
 
 function berlinLocalTimeToIso(date: string, rawTime: unknown): string {

@@ -6,6 +6,7 @@ import type { FeedKind, FeedingState, MealView } from "@/lib/feeding-types";
 
 type Props = { displayName: string };
 type Editor = { mealId: string } | null;
+type MedicationPlanDraft = { targetAmount: string; unit: string; mealNumbers: number[] };
 
 export function FeedingApp({ displayName }: Props) {
   const [selectedDate, setSelectedDate] = useState(() => localDate());
@@ -17,6 +18,7 @@ export function FeedingApp({ displayName }: Props) {
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
   const [addingExtra, setAddingExtra] = useState(false);
   const [removingMealId, setRemovingMealId] = useState<string | null>(null);
+  const [savingMedicationKey, setSavingMedicationKey] = useState<string | null>(null);
 
   const load = useCallback(async (date: string) => {
     try {
@@ -134,6 +136,23 @@ export function FeedingApp({ displayName }: Props) {
       setError(messageOf(removeError));
     } finally {
       setRemovingMealId(null);
+    }
+  }
+
+  async function setMedicationStatus(meal: MealView, medicationId: string, given: boolean) {
+    const key = `${meal.id}:${medicationId}`;
+    setSavingMedicationKey(key);
+    try {
+      await mutate({
+        action: "set_medication_given",
+        mealId: meal.id,
+        medicationId,
+        given,
+      });
+    } catch (saveError) {
+      setError(messageOf(saveError));
+    } finally {
+      setSavingMedicationKey(null);
     }
   }
 
@@ -300,6 +319,14 @@ export function FeedingApp({ displayName }: Props) {
                           </div>
                         </>
                       )}
+                      {meal.medications.length > 0 && (
+                        <MedicationPanel
+                          meal={meal}
+                          previewOnly={Boolean(state.day?.virtual)}
+                          savingKey={savingMedicationKey}
+                          onToggle={(medicationId, given) => void setMedicationStatus(meal, medicationId, given)}
+                        />
+                      )}
                     </article>
                   ))}
                 </div>
@@ -338,7 +365,7 @@ export function FeedingApp({ displayName }: Props) {
 
       {settingsOpen && state && (
         <SettingsDialog
-          key={`${state.date}-${state.currentPlan?.id ?? "none"}-${state.feedItems.map((item) => item.id).join("-")}`}
+          key={`${state.date}-${state.currentPlan?.id ?? "none"}-${state.feedItems.map((item) => item.id).join("-")}-${state.medications.map((item) => item.id).join("-")}`}
           state={state}
           onClose={() => state.currentPlan && setSettingsOpen(false)}
           onMutate={mutate}
@@ -346,6 +373,58 @@ export function FeedingApp({ displayName }: Props) {
         />
       )}
     </main>
+  );
+}
+
+function MedicationPanel({
+  meal,
+  previewOnly,
+  savingKey,
+  onToggle,
+}: {
+  meal: MealView;
+  previewOnly: boolean;
+  savingKey: string | null;
+  onToggle: (medicationId: string, given: boolean) => void;
+}) {
+  return (
+    <section className="medication-panel" aria-label={`Medikamente für Mahlzeit ${meal.number}`}>
+      <div className="medication-panel-heading">
+        <span>Medikament geplant</span>
+        <small>Getrennt vom Futter dokumentieren</small>
+      </div>
+      <div className="medication-dose-list">
+        {meal.medications.map((medication) => {
+          const key = `${meal.id}:${medication.id}`;
+          const saving = savingKey === key;
+          return (
+            <div className={`medication-dose ${medication.given ? "given" : ""}`} key={medication.id}>
+              <div>
+                <strong>{medication.name}</strong>
+                <span>{medication.targetAmount} {medication.unit}</span>
+              </div>
+              {previewOnly ? (
+                <span className="medication-preview">Geplant</span>
+              ) : (
+                <button
+                  className="medication-check"
+                  type="button"
+                  aria-pressed={medication.given}
+                  aria-label={medication.given
+                    ? `${medication.name}: Gabe rückgängig machen`
+                    : `${medication.name}: als gegeben markieren`}
+                  disabled={saving}
+                  onClick={() => onToggle(medication.id, !medication.given)}
+                >
+                  <span className="check-box" aria-hidden="true">{medication.given ? "✓" : ""}</span>
+                  {saving ? "Wird gespeichert …" : medication.given ? "Gegeben" : "Als gegeben markieren"}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -451,6 +530,7 @@ function SettingsDialog({
 }) {
   const selectedTargets = state.date >= state.today ? state.day?.totals : null;
   const [name, setName] = useState("");
+  const [medicationName, setMedicationName] = useState("");
   const [kind, setKind] = useState<FeedKind>("wet");
   const [mealCount, setMealCount] = useState(String(state.day?.mealCount ?? state.currentPlan?.mealCount ?? 3));
   const [effectiveDate, setEffectiveDate] = useState(state.date < state.today ? state.today : state.date);
@@ -464,6 +544,15 @@ function SettingsDialog({
       ),
     ]),
   ));
+  const [medicationPlans, setMedicationPlans] = useState<Record<string, MedicationPlanDraft>>(() => {
+    const source = medicationPlansForSettings(state);
+    return Object.fromEntries(state.medications.map((medication) => {
+      const planned = source.find((item) => item.id === medication.id);
+      return [medication.id, planned
+        ? { targetAmount: planned.targetAmount, unit: planned.unit, mealNumbers: planned.mealNumbers }
+        : { targetAmount: "", unit: "", mealNumbers: [] }];
+    }));
+  });
   const [saving, setSaving] = useState(false);
 
   async function addItem(event: FormEvent) {
@@ -479,6 +568,34 @@ function SettingsDialog({
     }
   }
 
+  async function addMedication(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await onMutate({ action: "create_medication", name: medicationName }, true);
+      setMedicationName("");
+    } catch (error) {
+      onError(messageOf(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateMedicationPlan(medicationId: string, patch: Partial<MedicationPlanDraft>) {
+    setMedicationPlans((current) => ({
+      ...current,
+      [medicationId]: { ...current[medicationId], ...patch },
+    }));
+  }
+
+  function toggleMedicationMeal(medicationId: string, mealNumber: number) {
+    const draft = medicationPlans[medicationId];
+    const mealNumbers = draft.mealNumbers.includes(mealNumber)
+      ? draft.mealNumbers.filter((number) => number !== mealNumber)
+      : [...draft.mealNumbers, mealNumber].sort((a, b) => a - b);
+    updateMedicationPlan(medicationId, { mealNumbers });
+  }
+
   async function submitPlan(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
@@ -488,6 +605,16 @@ function SettingsDialog({
         effectiveDate,
         mealCount: Number(mealCount),
         items: state.feedItems.map((item) => ({ feedItemId: item.id, dailyGrams: amounts[item.id] ?? "0" })),
+        medications: state.medications.flatMap((medication) => {
+          const draft = medicationPlans[medication.id];
+          const assignedMeals = draft.mealNumbers.filter((number) => number <= Number(mealCount));
+          return assignedMeals.length === 0 ? [] : [{
+            medicationId: medication.id,
+            targetAmount: draft.targetAmount,
+            unit: draft.unit,
+            mealNumbers: assignedMeals,
+          }];
+        }),
       });
     } catch (error) {
       onError(messageOf(error));
@@ -530,6 +657,31 @@ function SettingsDialog({
               </fieldset>
               <button className="secondary-button" type="submit" disabled={saving}>Baustein hinzufügen</button>
             </form>
+
+            <div className="medication-library">
+              <h3>Medikamente</h3>
+              <p className="muted">Name frei anlegen; Sollmenge und Mahlzeiten legst du rechts im Tagesplan fest.</p>
+              <div className="medication-chip-list">
+                {state.medications.length === 0
+                  ? <span className="empty-chip-note">Noch kein Medikament angelegt.</span>
+                  : state.medications.map((medication) => (
+                    <span className="medication-chip" key={medication.id}>{medication.name}</span>
+                  ))}
+              </div>
+              <form className="add-medication-form" onSubmit={(event) => void addMedication(event)}>
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={medicationName}
+                    onChange={(event) => setMedicationName(event.target.value)}
+                    maxLength={80}
+                    placeholder="z. B. Schmerzmittel"
+                    required
+                  />
+                </label>
+                <button className="secondary-button" type="submit" disabled={saving}>Medikament hinzufügen</button>
+              </form>
+            </div>
           </div>
 
           <form className="settings-panel plan-panel" onSubmit={(event) => void submitPlan(event)}>
@@ -569,8 +721,79 @@ function SettingsDialog({
                 </label>
               ))}
             </div>
+            <section className="medication-plan-editor" aria-labelledby="medication-plan-title">
+              <div>
+                <h3 id="medication-plan-title">Medikamentenplan</h3>
+                <p className="muted">Sollmenge und Einheit werden genau so protokolliert, wie du sie eingibst. Es findet keine Dosierungsberechnung statt.</p>
+              </div>
+              {state.medications.length === 0 ? (
+                <p className="inline-note">Lege links zuerst ein Medikament an.</p>
+              ) : (
+                <div className="medication-plan-list">
+                  {state.medications.map((medication) => {
+                    const draft = medicationPlans[medication.id];
+                    const assigned = draft.mealNumbers.some((number) => number <= Number(mealCount));
+                    return (
+                      <article className={`medication-plan-card ${assigned ? "assigned" : ""}`} key={medication.id}>
+                        <div className="medication-plan-heading">
+                          <strong>{medication.name}</strong>
+                          <small>{assigned ? "Im Tagesplan" : "Nicht eingeplant"}</small>
+                        </div>
+                        <div className="medication-fields">
+                          <label>
+                            <span>Sollmenge</span>
+                            <input
+                              type="text"
+                              maxLength={30}
+                              value={draft.targetAmount}
+                              onChange={(event) => updateMedicationPlan(medication.id, { targetAmount: event.target.value })}
+                              placeholder="z. B. ½ oder ⅓"
+                              aria-label={`Sollmenge ${medication.name}`}
+                              required={assigned}
+                            />
+                          </label>
+                          <label>
+                            <span>Einheit</span>
+                            <input
+                              type="text"
+                              list="medication-units"
+                              maxLength={30}
+                              value={draft.unit}
+                              onChange={(event) => updateMedicationPlan(medication.id, { unit: event.target.value })}
+                              placeholder="z. B. Tablette"
+                              aria-label={`Einheit ${medication.name}`}
+                              required={assigned}
+                            />
+                          </label>
+                        </div>
+                        <fieldset className="meal-choice-fieldset">
+                          <legend>Zu diesen Mahlzeiten</legend>
+                          <div className="meal-choice-list">
+                            {Array.from({ length: Number(mealCount) }, (_, index) => index + 1).map((number) => (
+                              <label key={number}>
+                                <input
+                                  type="checkbox"
+                                  checked={draft.mealNumbers.includes(number)}
+                                  onChange={() => toggleMedicationMeal(medication.id, number)}
+                                />
+                                <span>Mahlzeit {number}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      </article>
+                    );
+                  })}
+                  <datalist id="medication-units">
+                    <option value="Gramm" />
+                    <option value="Löffelchen" />
+                    <option value="Tablette" />
+                  </datalist>
+                </div>
+              )}
+            </section>
             <p className="version-note">
-              Vergangene Tage bleiben unverändert. Für heute werden nur noch offene Mahlzeiten neu verteilt.
+              Vergangene Tage bleiben unverändert. Für heute werden nur offene, noch nicht dokumentierte Bereiche angepasst.
             </p>
             <button className="primary-button wide" type="submit" disabled={saving || state.feedItems.length === 0}>
               {saving ? "Wird gespeichert …" : "Vorgaben speichern"}
@@ -605,3 +828,24 @@ function formatShortDate(date: string) {
 function kindLabel(kind: FeedKind) { return kind === "wet" ? "Nassfutter" : "Trockenfutter"; }
 function grams(value: number) { return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(value)} g`; }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : "Etwas ist schiefgegangen."; }
+
+function medicationPlansForSettings(state: FeedingState): Array<{
+  id: string;
+  targetAmount: string;
+  unit: string;
+  mealNumbers: number[];
+}> {
+  if (!state.day?.virtual) return state.currentPlan?.medications ?? [];
+  const plans = new Map<string, { id: string; targetAmount: string; unit: string; mealNumbers: number[] }>();
+  state.day.meals.forEach((meal) => meal.medications.forEach((medication) => {
+    const existing = plans.get(medication.id);
+    if (existing) existing.mealNumbers.push(meal.number);
+    else plans.set(medication.id, {
+      id: medication.id,
+      targetAmount: medication.targetAmount,
+      unit: medication.unit,
+      mealNumbers: [meal.number],
+    });
+  }));
+  return [...plans.values()];
+}

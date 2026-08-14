@@ -11,6 +11,16 @@ export const feedItems = sqliteTable("feed_items", {
   uniqueIndex("idx_feed_items_owner_name").on(table.ownerId, table.name),
 ]);
 
+export const medications = sqliteTable("medications", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  name: text("name").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_medications_owner_created").on(table.ownerId, table.createdAt),
+  uniqueIndex("idx_medications_owner_name").on(table.ownerId, table.name),
+]);
+
 export const planVersions = sqliteTable("plan_versions", {
   id: text("id").primaryKey(),
   ownerId: text("owner_id").notNull(),
@@ -26,6 +36,15 @@ export const planVersionItems = sqliteTable("plan_version_items", {
   feedItemId: text("feed_item_id").notNull().references(() => feedItems.id),
   dailyGrams: real("daily_grams").notNull(),
 }, (table) => [primaryKey({ columns: [table.planVersionId, table.feedItemId] })]);
+
+export const planVersionMedicationDoses = sqliteTable("plan_version_medication_doses", {
+  planVersionId: text("plan_version_id").notNull().references(() => planVersions.id, { onDelete: "cascade" }),
+  medicationId: text("medication_id").notNull().references(() => medications.id),
+  medicationName: text("medication_name").notNull(),
+  targetAmount: text("target_amount").notNull(),
+  unit: text("unit").notNull(),
+  mealNumber: integer("meal_number").notNull(),
+}, (table) => [primaryKey({ columns: [table.planVersionId, table.medicationId, table.mealNumber] })]);
 
 export const feedingDays = sqliteTable("feeding_days", {
   id: text("id").primaryKey(),
@@ -67,3 +86,12 @@ export const mealAllocations = sqliteTable("meal_allocations", {
   primaryKey({ columns: [table.mealId, table.feedItemId] }),
   index("idx_meal_allocations_feed_item").on(table.feedItemId),
 ]);
+
+export const mealMedications = sqliteTable("meal_medications", {
+  mealId: text("meal_id").notNull().references(() => mealRecords.id, { onDelete: "cascade" }),
+  medicationId: text("medication_id").notNull(),
+  medicationName: text("medication_name").notNull(),
+  targetAmount: text("target_amount").notNull(),
+  unit: text("unit").notNull(),
+  givenAt: text("given_at"),
+}, (table) => [primaryKey({ columns: [table.mealId, table.medicationId] })]);

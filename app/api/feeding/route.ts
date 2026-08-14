@@ -5,12 +5,14 @@ import {
   addExtraMeal,
   berlinToday,
   createFeedItem,
+  createMedication,
   getFeedingDay,
   getFeedingState,
   removeCompletedMeal,
   removeOpenMeal,
   saveMeal,
   savePlan,
+  setMedicationGiven,
 } from "@/db/feeding";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +38,9 @@ export async function POST(request: NextRequest) {
       case "create_item":
         await createFeedItem(user.userId, body.name, body.kind);
         break;
+      case "create_medication":
+        await createMedication(user.userId, body.name);
+        break;
       case "save_plan":
         await savePlan(user.userId, body);
         break;
@@ -52,6 +57,10 @@ export async function POST(request: NextRequest) {
       }
       case "delete_meal_entry": {
         const date = await removeCompletedMeal(user.userId, body.mealId);
+        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
+      }
+      case "set_medication_given": {
+        const date = await setMedicationGiven(user.userId, body.mealId, body.medicationId, body.given);
         return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
       }
       default:
