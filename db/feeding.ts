@@ -75,6 +75,12 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
      WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`,
   ).bind(ownerId).all<Medication>();
   const medications: Medication[] = medicationRows.results;
+  const lastMeal = await db.prepare(
+    `SELECT m.completed_at
+     FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
+     WHERE d.owner_id = ? AND m.completed_at IS NOT NULL
+     ORDER BY unixepoch(m.completed_at) DESC LIMIT 1`,
+  ).bind(ownerId).first<{ completed_at: string }>();
   const currentPlan = await readPlan(ownerId, today);
   const selectedPlan = await readPlan(ownerId, selectedDate);
   let day: DayView | null = null;
@@ -87,7 +93,15 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
   } else if (selectedDate <= today) {
     day = await readDay(ownerId, selectedDate);
   }
-  return { date: selectedDate, today, feedItems, medications, currentPlan, day };
+  return {
+    date: selectedDate,
+    today,
+    lastMealAt: lastMeal?.completed_at ?? null,
+    feedItems,
+    medications,
+    currentPlan,
+    day,
+  };
 }
 
 export async function getFeedingDay(ownerId: string, selectedDate: string): Promise<DayView | null> {

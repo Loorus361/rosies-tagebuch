@@ -1,7 +1,11 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { formatExactMealTime, formatRoundedMealTime } from "@/lib/feeding-time";
+import {
+  formatElapsedSinceMeal,
+  formatExactMealTime,
+  formatRoundedMealTime,
+} from "@/lib/feeding-time";
 import type { FeedKind, FeedingState, MealView } from "@/lib/feeding-types";
 
 type Props = { displayName: string };
@@ -19,6 +23,7 @@ export function FeedingApp({ displayName }: Props) {
   const [addingExtra, setAddingExtra] = useState(false);
   const [removingMealId, setRemovingMealId] = useState<string | null>(null);
   const [savingMedicationKey, setSavingMedicationKey] = useState<string | null>(null);
+  const [timerNow, setTimerNow] = useState(() => Date.now());
 
   const load = useCallback(async (date: string) => {
     try {
@@ -38,6 +43,12 @@ export function FeedingApp({ displayName }: Props) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(selectedDate); }, [load, selectedDate]);
 
+  useEffect(() => {
+    if (!state?.lastMealAt || state.today !== selectedDate) return;
+    const interval = window.setInterval(() => setTimerNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, [selectedDate, state?.lastMealAt, state?.today]);
+
   async function mutate(body: Record<string, unknown>, keepSettings = false) {
     setError("");
     const response = await fetch("/api/feeding", {
@@ -45,13 +56,9 @@ export function FeedingApp({ displayName }: Props) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json() as { error?: string; day?: FeedingState["day"] };
+    const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error || "Die Änderung konnte nicht gespeichert werden.");
-    if (Object.prototype.hasOwnProperty.call(result, "day")) {
-      setState((current) => current ? { ...current, day: result.day ?? null } : current);
-    } else {
-      await load(selectedDate);
-    }
+    await load(selectedDate);
     setSettingsOpen(keepSettings);
   }
 
@@ -209,6 +216,18 @@ export function FeedingApp({ displayName }: Props) {
                       ? `Gilt ab ${formatShortDate(state.day.effectiveDate)} · Noch keine Ist-Mengen möglich`
                       : `${completed} von ${state.day.meals.length} Mahlzeiten eingetragen`}
                   </p>
+                  {isToday && state.lastMealAt && (
+                    <div
+                      className="meal-timer"
+                      aria-label={`Seit letzter Mahlzeit: ${formatElapsedSinceMeal(state.lastMealAt, timerNow)}`}
+                    >
+                      <span className="meal-timer-icon" aria-hidden="true" />
+                      <span>
+                        <small>Seit letzter Mahlzeit</small>
+                        <strong>{formatElapsedSinceMeal(state.lastMealAt, timerNow)}</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <button className="secondary-button" type="button" onClick={() => setSettingsOpen(true)}>
                   Tagesvorgaben ändern

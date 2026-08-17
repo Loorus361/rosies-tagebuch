@@ -85,6 +85,7 @@ test("runs the complete daily feeding flow without changing future defaults", as
   });
   state = (await request(`/api/feeding?date=${today}`)).json;
   assert.equal(state.day.meals[0].completed, true);
+  assert.equal(state.lastMealAt, state.day.meals[0].completedAt);
   assert.deepEqual(gramsByKind(state.day.totals, "remainingGrams"), { wet: 60, dry: 20 });
 
   const secondMeal = state.day.meals.find((meal) => !meal.completed);
@@ -151,6 +152,7 @@ test("runs the complete daily feeding flow without changing future defaults", as
   await post({ action: "create_item", name: "Entfernen Nass", kind: "wet" }, removalOwner);
   await post({ action: "create_item", name: "Entfernen Trocken", kind: "dry" }, removalOwner);
   let removalState = (await request(`/api/feeding?date=${today}`, { owner: removalOwner })).json;
+  assert.equal(removalState.lastMealAt, null, "another owner's meal time stays private");
   const removalWet = removalState.feedItems.find((item) => item.kind === "wet");
   const removalDry = removalState.feedItems.find((item) => item.kind === "dry");
   await post({

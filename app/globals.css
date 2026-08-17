@@ -35,6 +35,14 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .summary-card { padding: 26px 28px; }
 .summary-number { margin: 0 0 4px; font-family: Georgia, serif; font-size: 1.7rem; }
 .muted, .empty-card p { margin-bottom: 0; color: var(--muted); line-height: 1.55; }
+.meal-timer { display: inline-flex; align-items: center; gap: 10px; margin-top: 16px; padding: 9px 12px; border: 1px solid rgba(169,86,63,.2); border-radius: 14px; background: #fff8ef; color: var(--terracotta-dark); }
+.meal-timer > span:last-child { display: grid; gap: 1px; }
+.meal-timer small { color: var(--muted); font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
+.meal-timer strong { font-size: .96rem; font-variant-numeric: tabular-nums; }
+.meal-timer-icon { position: relative; width: 24px; height: 24px; flex: 0 0 auto; border: 2px solid var(--terracotta); border-radius: 50%; }
+.meal-timer-icon::before, .meal-timer-icon::after { content: ""; position: absolute; left: 10px; top: 4px; width: 2px; border-radius: 999px; background: var(--terracotta); transform-origin: bottom center; }
+.meal-timer-icon::before { height: 7px; }
+.meal-timer-icon::after { height: 6px; transform: rotate(125deg); }
 .empty-card { justify-content: flex-start; margin-top: 18px; padding: 38px; }
 .empty-card p { max-width: 620px; }
 .bowl-mark { position: relative; width: 58px; height: 58px; flex: 0 0 auto; border-radius: 50%; background: var(--sand); }

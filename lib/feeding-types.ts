@@ -51,6 +51,7 @@ export type DayView = {
 export type FeedingState = {
   date: string;
   today: string;
+  lastMealAt: string | null;
   feedItems: FeedItem[];
   medications: Medication[];
   currentPlan: PlanView | null;
