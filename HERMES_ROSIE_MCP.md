@@ -45,6 +45,14 @@ Hermes registriert die Werkzeuge üblicherweise als:
 - `mcp__rosies_tagebuch__rosie_futter_korrigieren`
 - `mcp__rosies_tagebuch__rosie_medikament_dokumentieren`
 
+### Wenn Rosies MCP bereits mit nur zwei Werkzeugen eingerichtet war
+
+Öffne in Rosies Tagebuch erneut **Hermes verbinden**, erstelle einen neuen
+Zugang und ersetze in `~/.hermes/config.yaml` den kompletten bisherigen Block
+`rosies_tagebuch:` durch den neu kopierten Block. Dadurch wird der alte
+Schlüssel widerrufen und die Freigabeliste enthält alle vier Werkzeuge. Lade
+anschließend mit `/reload-mcp` neu.
+
 ## Regeln für jeden schreibenden Auftrag
 
 1. Rufe immer zuerst `rosie_tag_anzeigen` für den betroffenen Tag auf.
