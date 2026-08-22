@@ -71,8 +71,35 @@ export const mealRecords = sqliteTable("meal_records", {
   mealNumber: integer("meal_number").notNull(),
   isExtra: integer("is_extra", { mode: "boolean" }).notNull().default(false),
   completedAt: text("completed_at"),
+  recordedVia: text("recorded_via", { enum: ["app", "hermes"] }),
 }, (table) => [
   uniqueIndex("idx_meal_records_day_number").on(table.dayId, table.mealNumber),
+]);
+
+export const agentAccessTokens = sqliteTable("agent_access_tokens", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at"),
+}, (table) => [
+  uniqueIndex("idx_agent_access_tokens_hash").on(table.tokenHash),
+  index("idx_agent_access_tokens_owner_created").on(table.ownerId, table.createdAt),
+]);
+
+export const agentActionRequests = sqliteTable("agent_action_requests", {
+  ownerId: text("owner_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  status: text("status", { enum: ["pending", "completed"] }).notNull(),
+  resultJson: text("result_json"),
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
+}, (table) => [
+  primaryKey({ columns: [table.ownerId, table.idempotencyKey] }),
+  index("idx_agent_action_requests_created").on(table.createdAt),
 ]);
 
 export const mealAllocations = sqliteTable("meal_allocations", {

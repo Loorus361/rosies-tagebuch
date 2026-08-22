@@ -15,7 +15,13 @@ import type {
 type VersionRow = { id: string; effective_date: string; meal_count: number };
 type DayRow = { id: string; plan_date: string; meal_count: number; effective_date: string };
 type DayItemRow = { feed_item_id: string; item_name: string; feed_kind: FeedKind; target_grams: number };
-type MealRow = { id: string; meal_number: number; is_extra: number; completed_at: string | null };
+type MealRow = {
+  id: string;
+  meal_number: number;
+  is_extra: number;
+  completed_at: string | null;
+  recorded_via?: "app" | "hermes" | null;
+};
 type AllocationRow = {
   meal_id: string;
   feed_item_id: string;
@@ -280,6 +286,7 @@ export async function saveMeal(
   mealId: unknown,
   rawActuals: unknown,
   rawCompletedTime?: unknown,
+  recordedVia: "app" | "hermes" = "app",
 ): Promise<void> {
   if (typeof mealId !== "string" || !mealId || !Array.isArray(rawActuals)) {
     throw new Error("Die Mahlzeit konnte nicht gespeichert werden.");
@@ -331,11 +338,9 @@ export async function saveMeal(
   ).bind(meal.day_id, mealId).all<MealRow>();
   const openMeals = otherMeals.results.filter((item) => !item.completed_at);
   const wasCompleted = Boolean(meal.completed_at);
-  const completedAt = wasCompleted
-    ? rawCompletedTime === undefined
-      ? meal.completed_at!
-      : berlinLocalTimeToIso(meal.plan_date, rawCompletedTime)
-    : berlinTimestampForInstant(new Date());
+  const completedAt = rawCompletedTime === undefined
+    ? wasCompleted ? meal.completed_at! : berlinTimestampForInstant(new Date())
+    : berlinLocalTimeToIso(meal.plan_date, rawCompletedTime);
   const orderedMeals = wasCompleted ? [] : [
     ...otherMeals.results.filter((item) => item.completed_at),
     meal,
@@ -345,7 +350,11 @@ export async function saveMeal(
     ...actuals.map((item) => db.prepare(
       `UPDATE meal_allocations SET actual_grams = ? WHERE meal_id = ? AND feed_item_id = ?`,
     ).bind(item.actualGrams, mealId, item.feedItemId)),
-    db.prepare("UPDATE meal_records SET completed_at = ? WHERE id = ?").bind(completedAt, mealId),
+    db.prepare(
+      `UPDATE meal_records
+       SET completed_at = ?, recorded_via = CASE WHEN completed_at IS NULL THEN ? ELSE recorded_via END
+       WHERE id = ?`,
+    ).bind(completedAt, recordedVia, mealId),
     ...openMeals.map((item) => db.prepare("DELETE FROM meal_allocations WHERE meal_id = ?").bind(item.id)),
     ...orderedMeals.map((item, index) => db.prepare(
       "UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?",
@@ -643,7 +652,8 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
       `SELECT feed_item_id, item_name, feed_kind, target_grams FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
     ).bind(day.id).all<DayItemRow>(),
     db.prepare(
-      `SELECT id, meal_number, is_extra, completed_at FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
+      `SELECT id, meal_number, is_extra, completed_at, recorded_via
+       FROM meal_records WHERE day_id = ? ORDER BY meal_number`,
     ).bind(day.id).all<MealRow>(),
     db.prepare(
       `SELECT a.meal_id, a.feed_item_id, a.item_name, a.feed_kind, a.planned_grams, a.actual_grams
@@ -662,6 +672,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
     extra: Boolean(meal.is_extra),
     completed: Boolean(meal.completed_at),
     completedAt: meal.completed_at,
+    recordedVia: meal.recorded_via === "hermes" ? "hermes" : meal.recorded_via === "app" ? "app" : null,
     allocations: allocations.results.filter((row) => row.meal_id === meal.id).map((row): MealAllocation => ({
       id: row.feed_item_id,
       name: row.item_name,
@@ -809,6 +820,7 @@ function virtualDay(date: string, plan: PlanView): DayView {
     extra: false,
     completed: false,
     completedAt: null,
+    recordedVia: null,
     allocations: plan.items.map((item) => ({
       id: item.id,
       name: item.name,

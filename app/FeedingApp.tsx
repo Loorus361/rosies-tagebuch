@@ -18,6 +18,7 @@ export function FeedingApp({ displayName }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentAccessOpen, setAgentAccessOpen] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
   const [addingExtra, setAddingExtra] = useState(false);
@@ -175,8 +176,13 @@ export function FeedingApp({ displayName }: Props) {
           <p className="eyebrow">Rosies Tagebuch</p>
           <h1>Fütterung</h1>
         </div>
-        <div className="account-chip" title={`Angemeldet als ${displayName}`}>
-          <span className="status-dot" /> Privat für {greetingName}
+        <div className="topbar-actions">
+          <button className="secondary-button agent-button" type="button" onClick={() => setAgentAccessOpen(true)}>
+            Hermes verbinden
+          </button>
+          <div className="account-chip" title={`Angemeldet als ${displayName}`}>
+            <span className="status-dot" /> Privat für {greetingName}
+          </div>
         </div>
       </header>
 
@@ -276,7 +282,10 @@ export function FeedingApp({ displayName }: Props) {
                             {meal.completed ? "Eingetragen" : "Offen"}
                           </span>
                           {meal.completedAt && (
-                            <time className="meal-time" dateTime={meal.completedAt}>{formatRoundedMealTime(meal.completedAt)}</time>
+                            <span className="meal-entry-meta">
+                              <time className="meal-time" dateTime={meal.completedAt}>{formatRoundedMealTime(meal.completedAt)}</time>
+                              {meal.recordedVia === "hermes" && <small className="entry-source">via Hermes</small>}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -391,7 +400,134 @@ export function FeedingApp({ displayName }: Props) {
           onError={(value) => setError(value)}
         />
       )}
+
+      {agentAccessOpen && (
+        <AgentAccessDialog onClose={() => setAgentAccessOpen(false)} />
+      )}
     </main>
+  );
+}
+
+type AgentAccessResponse = {
+  active?: boolean;
+  name?: string | null;
+  createdAt?: string | null;
+  lastUsedAt?: string | null;
+  config?: string;
+  error?: string;
+};
+
+function AgentAccessDialog({ onClose }: { onClose: () => void }) {
+  const [status, setStatus] = useState<AgentAccessResponse | null>(null);
+  const [config, setConfig] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/agent-access", { cache: "no-store" });
+      const data = await response.json() as AgentAccessResponse;
+      if (!response.ok) throw new Error(data.error || "Der Hermes-Zugang konnte nicht geladen werden.");
+      setStatus(data);
+    } catch (loadError) {
+      setError(messageOf(loadError));
+    }
+  }, []);
+
+  // Loading the access status is the external synchronization this effect owns.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void loadStatus(); }, [loadStatus]);
+
+  async function changeAccess(action: "create" | "revoke") {
+    setWorking(true);
+    setError("");
+    setCopied(false);
+    try {
+      const response = await fetch("/api/agent-access", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json() as AgentAccessResponse;
+      if (!response.ok) throw new Error(data.error || "Der Hermes-Zugang konnte nicht geändert werden.");
+      setConfig(data.config ?? "");
+      await loadStatus();
+    } catch (changeError) {
+      setError(messageOf(changeError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function copyConfig() {
+    try {
+      await navigator.clipboard.writeText(config);
+      setCopied(true);
+    } catch {
+      setError("Die Konfiguration konnte nicht kopiert werden. Markiere den Text bitte manuell.");
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="settings-dialog agent-access-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-access-title">
+        <div className="dialog-heading">
+          <div>
+            <p className="eyebrow">Agentenzugang</p>
+            <h2 id="agent-access-title">Hermes mit Rosies Tagebuch verbinden</h2>
+          </div>
+          <button className="close-button" type="button" onClick={onClose} aria-label="Schließen">×</button>
+        </div>
+
+        <div className="agent-access-content">
+          <p>
+            Hermes erhält ausschließlich zwei Werkzeuge: den Fütterungstag lesen und Futter in die nächste offene Mahlzeit eintragen.
+            Pläne, Medikamente, Korrekturen und Löschungen bleiben gesperrt.
+          </p>
+          {error && <div className="error-banner" role="alert">{error}</div>}
+          {!status ? (
+            <p className="muted">Zugang wird geprüft …</p>
+          ) : (
+            <div className={`agent-status ${status.active ? "active" : "inactive"}`}>
+              <span className="status-dot" />
+              <div>
+                <strong>{status.active ? "Hermes-Zugang aktiv" : "Noch kein Hermes-Zugang"}</strong>
+                {status.lastUsedAt && <small>Zuletzt verwendet: {formatAgentTimestamp(status.lastUsedAt)}</small>}
+              </div>
+            </div>
+          )}
+
+          {config ? (
+            <section className="agent-config" aria-labelledby="agent-config-title">
+              <div>
+                <h3 id="agent-config-title">Konfiguration – nur jetzt vollständig sichtbar</h3>
+                <p className="muted">Diesen Block in die Hermes-Konfiguration übernehmen und geheim halten.</p>
+              </div>
+              <textarea value={config} readOnly spellCheck={false} aria-label="Hermes MCP-Konfiguration" />
+              <button className="primary-button" type="button" onClick={() => void copyConfig()}>
+                {copied ? "Kopiert" : "Konfiguration kopieren"}
+              </button>
+            </section>
+          ) : (
+            <div className="agent-access-actions">
+              <button className="primary-button" type="button" disabled={working} onClick={() => void changeAccess("create")}>
+                {working ? "Wird erstellt …" : status?.active ? "Neuen Zugang erstellen" : "Hermes-Zugang erstellen"}
+              </button>
+              {status?.active && (
+                <button className="text-button delete-entry" type="button" disabled={working} onClick={() => void changeAccess("revoke")}>
+                  Zugang widerrufen
+                </button>
+              )}
+            </div>
+          )}
+
+          <p className="agent-security-note">
+            Ein neuer Zugang widerruft automatisch den bisherigen. Fütterungseinträge von Hermes werden im Tagebuch gekennzeichnet und lassen sich dort weiterhin korrigieren oder entfernen.
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -847,6 +983,15 @@ function formatShortDate(date: string) {
 function kindLabel(kind: FeedKind) { return kind === "wet" ? "Nassfutter" : "Trockenfutter"; }
 function grams(value: number) { return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(value)} g`; }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : "Etwas ist schiefgegangen."; }
+function formatAgentTimestamp(value: string) {
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
 
 function medicationPlansForSettings(state: FeedingState): Array<{
   id: string;

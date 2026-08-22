@@ -36,6 +36,7 @@ export type MealView = {
   extra: boolean;
   completed: boolean;
   completedAt: string | null;
+  recordedVia: "app" | "hermes" | null;
   allocations: MealAllocation[];
   medications: MealMedication[];
 };
