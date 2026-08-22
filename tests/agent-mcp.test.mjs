@@ -37,6 +37,40 @@ test("serves the restricted Hermes MCP tools for feeding, corrections, and medic
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
   assert.equal(unauthorized.status, 401);
+  assert.deepEqual(await unauthorized.json(), {
+    error: "missing_access_token",
+    error_description: "Der Bearer-Zugangsschlüssel fehlt.",
+  });
+  assert.match(unauthorized.headers.get("www-authenticate"), /error="missing_access_token"/);
+
+  const malformedAuthorization = await miniflare.dispatchFetch("http://localhost/api/hermes-mcp", {
+    method: "POST",
+    headers: {
+      authorization: "Basic nicht-erlaubt",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/list", params: {} }),
+  });
+  assert.equal(malformedAuthorization.status, 401);
+  assert.deepEqual(await malformedAuthorization.json(), {
+    error: "invalid_authorization_header",
+    error_description: "Die Authorization-Kopfzeile muss genau einen Bearer-Zugangsschlüssel enthalten.",
+  });
+
+  const invalidToken = await miniflare.dispatchFetch("http://localhost/api/hermes-mcp", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer ${ROSIE_MCP_TOKEN}",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/list", params: {} }),
+  });
+  assert.equal(invalidToken.status, 401);
+  assert.deepEqual(await invalidToken.json(), {
+    error: "invalid_access_token",
+    error_description: "Der Zugangsschlüssel ist ungültig oder widerrufen.",
+  });
+  assert.match(invalidToken.headers.get("www-authenticate"), /error="invalid_access_token"/);
 
   async function mcp(id, method, params = {}) {
     const response = await miniflare.dispatchFetch("http://localhost/api/hermes-mcp", {

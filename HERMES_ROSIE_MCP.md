@@ -38,6 +38,15 @@ Der Streamable-HTTP-Endpunkt lautet:
 7. Prüfe die Verbindung mit `hermes mcp test rosies_tagebuch` oder frage
    Hermes, welche MCP-Werkzeuge verfügbar sind.
 
+Bei einem HTTP-401-Fehler liefert der Endpunkt einen maschinenlesbaren Code:
+
+- `missing_access_token`: Es wurde kein Bearer-Schlüssel gesendet.
+- `invalid_authorization_header`: Die Authorization-Kopfzeile ist falsch
+  aufgebaut.
+- `invalid_access_token`: Der Schlüssel ist ungültig oder widerrufen. Erstelle
+  in Rosies Tagebuch einen neuen Hermes-Zugang und ersetze den bisherigen
+  Schlüssel vollständig.
+
 Hermes registriert die Werkzeuge üblicherweise als:
 
 - `mcp__rosies_tagebuch__rosie_tag_anzeigen`

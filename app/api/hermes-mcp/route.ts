@@ -167,10 +167,24 @@ async function serve(request: Request): Promise<Response> {
   if (origin && origin !== new URL(request.url).origin) {
     return Response.json({ error: "Ungültiger Ursprung." }, { status: 403 });
   }
-  const token = readBearerToken(request.headers.get("authorization"));
-  if (!token) return unauthorized();
+  const authorization = request.headers.get("authorization");
+  if (!authorization) {
+    return unauthorized("missing_access_token", "Der Bearer-Zugangsschlüssel fehlt.");
+  }
+  const token = readBearerToken(authorization);
+  if (!token) {
+    return unauthorized(
+      "invalid_authorization_header",
+      "Die Authorization-Kopfzeile muss genau einen Bearer-Zugangsschlüssel enthalten.",
+    );
+  }
   const access = await authenticateAgentToken(token);
-  if (!access) return unauthorized();
+  if (!access) {
+    return unauthorized(
+      "invalid_access_token",
+      "Der Zugangsschlüssel ist ungültig oder widerrufen.",
+    );
+  }
   const authInfo: AuthInfo = {
     token: "verified",
     clientId: access.ownerId,
@@ -190,9 +204,15 @@ function readBearerToken(value: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-function unauthorized(): Response {
+function unauthorized(code: string, message: string): Response {
   return Response.json(
-    { error: "Hermes ist nicht für Rosies Tagebuch freigeschaltet." },
-    { status: 401, headers: { "www-authenticate": 'Bearer realm="rosies-tagebuch"', "cache-control": "no-store" } },
+    { error: code, error_description: message },
+    {
+      status: 401,
+      headers: {
+        "www-authenticate": `Bearer realm="rosies-tagebuch", error="${code}"`,
+        "cache-control": "no-store",
+      },
+    },
   );
 }
