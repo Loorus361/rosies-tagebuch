@@ -23,7 +23,8 @@ Datenbankabfrage wird außerdem nach der Nutzer-ID gefiltert.
 
 ## Hermes-Agent
 
-Die App stellt unter `/mcp` einen privaten Streamable-HTTP-MCP-Server bereit.
+Die App stellt unter `/api/hermes-mcp` einen privaten
+Streamable-HTTP-MCP-Server bereit.
 Er exponiert ausschließlich den Fütterungstag und das idempotente Eintragen in
 die nächste offene Mahlzeit. Zugriff erfordert einen in D1 gehashten,
 widerrufbaren Agentenschlüssel. Er wird ausschließlich über den angemeldeten

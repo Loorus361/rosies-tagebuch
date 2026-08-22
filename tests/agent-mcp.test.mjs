@@ -31,7 +31,7 @@ test("serves the restricted Hermes MCP tools and prevents duplicate feedings", a
   const { token } = await seedResponse.json();
   assert.match(token, /^rosie_[a-f0-9]{64}$/);
 
-  const unauthorized = await miniflare.dispatchFetch("http://localhost/mcp", {
+  const unauthorized = await miniflare.dispatchFetch("http://localhost/api/hermes-mcp", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
@@ -39,7 +39,7 @@ test("serves the restricted Hermes MCP tools and prevents duplicate feedings", a
   assert.equal(unauthorized.status, 401);
 
   async function mcp(id, method, params = {}) {
-    const response = await miniflare.dispatchFetch("http://localhost/mcp", {
+    const response = await miniflare.dispatchFetch("http://localhost/api/hermes-mcp", {
       method: "POST",
       headers: {
         accept: "application/json, text/event-stream",

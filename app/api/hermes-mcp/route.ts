@@ -1,3 +1,4 @@
+// Dedicated non-reserved route for Hermes' Streamable HTTP MCP connection.
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { authenticateAgentToken } from "@/db/agent-access";

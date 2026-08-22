@@ -1,6 +1,6 @@
 import { createAgentAccessToken } from "@/db/agent-access";
 import { createFeedItem, getFeedingState, savePlan } from "@/db/feeding";
-import { POST as mcpPost } from "@/app/mcp/route";
+import { POST as mcpPost } from "@/app/api/hermes-mcp/route";
 
 const OWNER_ID = "agent-qa-owner";
 
@@ -26,7 +26,7 @@ export default {
     if (url.pathname === "/state") {
       return Response.json(await getFeedingState(OWNER_ID, berlinToday()));
     }
-    if (url.pathname === "/mcp") return mcpPost(request);
+    if (url.pathname === "/api/hermes-mcp") return mcpPost(request);
     return new Response("Not found", { status: 404 });
   },
 };

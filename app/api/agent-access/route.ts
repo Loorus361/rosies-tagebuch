@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
     if (body.action !== "create") return noStore({ error: "Unbekannte Aktion." }, 400);
     const agentToken = await createAgentAccessToken(user.userId);
-    const mcpUrl = `${request.nextUrl.origin}/mcp`;
+    const mcpUrl = `${request.nextUrl.origin}/api/hermes-mcp`;
     return noStore({
       ok: true,
       config: hermesConfig(mcpUrl, agentToken),
@@ -51,6 +51,12 @@ function hermesConfig(mcpUrl: string, agentToken: string): string {
     `      Authorization: ${JSON.stringify(`Bearer ${agentToken}`)}`,
     "    timeout: 30",
     "    connect_timeout: 20",
+    "    tools:",
+    "      include:",
+    "        - rosie_tag_anzeigen",
+    "        - rosie_futter_eintragen",
+    "      resources: false",
+    "      prompts: false",
   ].join("\n");
 }
 
