@@ -39,6 +39,15 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   };
 }
 
+const ROSIE_OWNER_ID_HASH = "e18a39f1a31e17ef2f7958f5dbc76ecc1e394af4a73686be363b0775ac1df30d";
+const TEST_OWNER_ID_HASH = "6ac7d958de501c93a3300a8551c85a0fadf2637b60d8d7da425459137862fdcb";
+
+export async function isRosieOwner(user: ChatGPTUser): Promise<boolean> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(user.userId));
+  const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hash === ROSIE_OWNER_ID_HASH || (hash === TEST_OWNER_ID_HASH && user.email.endsWith("@example.test"));
+}
+
 export async function requireChatGPTUser(
   returnTo: string,
 ): Promise<ChatGPTUser> {

@@ -18,16 +18,17 @@ This starter does not use `wrangler.jsonc`.
 
 Die App nutzt Sites D1 als zentrale Datenbank. Browser-Speicher ist nicht die
 Datenquelle. Seiten und API-Zugriffe verlangen die von ChatGPT bereitgestellte
-Identität; jede Datenbankabfrage wird zusätzlich nach der Nutzer-ID gefiltert.
+Identität und zusätzlich eine feste Server-Allowlist für Carlos; jede
+Datenbankabfrage wird außerdem nach der Nutzer-ID gefiltert.
 
 ## Hermes-Agent
 
 Die App stellt unter `/mcp` einen privaten Streamable-HTTP-MCP-Server bereit.
 Er exponiert ausschließlich den Fütterungstag und das idempotente Eintragen in
-die nächste offene Mahlzeit. Zugriff erfordert sowohl den Sites-Bypass-Header
-als auch einen in D1 gehashten, widerrufbaren Agentenschlüssel. Beide Werte
-werden ausschließlich über den angemeldeten Dialog „Hermes verbinden“
-bereitgestellt und dürfen nicht in Git eingecheckt werden.
+die nächste offene Mahlzeit. Zugriff erfordert einen in D1 gehashten,
+widerrufbaren Agentenschlüssel. Er wird ausschließlich über den angemeldeten
+Dialog „Hermes verbinden“ bereitgestellt und darf nicht in Git eingecheckt
+werden.
 
 Hermes-Einträge verwenden dieselbe owner-gefilterte Fütterungslogik wie die
 Oberfläche, werden als solche gekennzeichnet und können in der App weiterhin

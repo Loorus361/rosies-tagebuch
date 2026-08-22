@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { getChatGPTUser, isRosieOwner } from "@/app/chatgpt-auth";
 import {
   assertDate,
   addExtraMeal,
@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const user = await getChatGPTUser();
   if (!user) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
+  if (!(await isRosieOwner(user))) return NextResponse.json({ error: "Kein Zugriff." }, { status: 403 });
   try {
     const date = request.nextUrl.searchParams.get("date") ?? berlinToday();
     assertDate(date);
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const user = await getChatGPTUser();
   if (!user) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
+  if (!(await isRosieOwner(user))) return NextResponse.json({ error: "Kein Zugriff." }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     switch (body.action) {

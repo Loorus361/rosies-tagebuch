@@ -54,3 +54,21 @@ test("redirects an anonymous visitor into ChatGPT sign-in", async () => {
   assert.ok([302, 303, 307, 308].includes(response.status));
   assert.match(response.headers.get("location") ?? "", /^\/signin-with-chatgpt\?return_to=/);
 });
+
+test("rejects a signed-in user outside Rosie's owner allowlist", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("other-user", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const response = await worker.fetch(
+    new Request("http://localhost/", {
+      headers: {
+        accept: "text/html",
+        "oai-authenticated-user-id": "someone-else",
+        "oai-authenticated-user-email": "someone@example.test",
+      },
+    }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+  assert.equal(response.status, 404);
+});
