@@ -55,6 +55,8 @@ function hermesConfig(mcpUrl: string, agentToken: string): string {
     "      include:",
     "        - rosie_tag_anzeigen",
     "        - rosie_futter_eintragen",
+    "        - rosie_futter_korrigieren",
+    "        - rosie_medikament_dokumentieren",
     "      resources: false",
     "      prompts: false",
   ].join("\n");

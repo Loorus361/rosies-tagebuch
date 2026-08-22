@@ -1,5 +1,5 @@
 import { createAgentAccessToken } from "@/db/agent-access";
-import { createFeedItem, getFeedingState, savePlan } from "@/db/feeding";
+import { createFeedItem, createMedication, getFeedingState, savePlan } from "@/db/feeding";
 import { POST as mcpPost } from "@/app/api/hermes-mcp/route";
 
 const OWNER_ID = "agent-qa-owner";
@@ -10,9 +10,11 @@ export default {
     if (url.pathname === "/seed" && request.method === "POST") {
       await createFeedItem(OWNER_ID, "Agent Nassfutter", "wet");
       await createFeedItem(OWNER_ID, "Agent Trockenfutter", "dry");
+      await createMedication(OWNER_ID, "Agent Medikament");
       const state = await getFeedingState(OWNER_ID, berlinToday());
       const wet = state.feedItems.find((item) => item.kind === "wet")!;
       const dry = state.feedItems.find((item) => item.kind === "dry")!;
+      const medication = state.medications.find((item) => item.name === "Agent Medikament")!;
       await savePlan(OWNER_ID, {
         effectiveDate: berlinToday(),
         mealCount: 2,
@@ -20,6 +22,12 @@ export default {
           { feedItemId: wet.id, dailyGrams: 100 },
           { feedItemId: dry.id, dailyGrams: 20 },
         ],
+        medications: [{
+          medicationId: medication.id,
+          targetAmount: "½",
+          unit: "Tablette",
+          mealNumbers: [1],
+        }],
       });
       return Response.json({ token: await createAgentAccessToken(OWNER_ID) });
     }

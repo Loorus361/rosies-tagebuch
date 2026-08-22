@@ -32,9 +32,10 @@ Dialog „Hermes verbinden“ bereitgestellt und darf nicht in Git eingecheckt
 werden.
 
 Hermes-Einträge verwenden dieselbe owner-gefilterte Fütterungslogik wie die
-Oberfläche, werden als solche gekennzeichnet und können in der App weiterhin
-korrigiert oder entfernt werden. Plan-, Medikamenten-, Korrektur- und
-Löschwerkzeuge sind nicht Teil des MCP-Servers.
+Oberfläche und werden als solche gekennzeichnet. Hermes darf außerdem
+vollständige Mengen-/Zeitkorrekturen vornehmen und den Status bereits geplanter
+Medikamente setzen oder zurücknehmen. Planänderungen und Löschwerkzeuge sind
+nicht Teil des MCP-Servers; eine Dosierung wird nie berechnet.
 
 ## Useful Commands
 

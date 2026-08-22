@@ -10,6 +10,7 @@ import {
   getFeedingDay,
   getFeedingState,
   saveMeal,
+  setMedicationGiven,
 } from "./feeding";
 import type { DayView, FeedKind, MealView } from "@/lib/feeding-types";
 
@@ -19,6 +20,20 @@ export type AgentRecordInput = {
   time?: string;
   amounts: AgentFoodAmount[];
   createExtraIfNeeded: boolean;
+  idempotencyKey: string;
+};
+export type AgentCorrectionInput = {
+  date?: string;
+  mealNumber: number;
+  time: string;
+  amounts: AgentFoodAmount[];
+  idempotencyKey: string;
+};
+export type AgentMedicationInput = {
+  date?: string;
+  mealNumber: number;
+  medicationName: string;
+  given: boolean;
   idempotencyKey: string;
 };
 
@@ -41,6 +56,13 @@ export type AgentDayResult = {
     completedAt: string | null;
     recordedVia: "app" | "hermes" | null;
     amounts: Array<{ name: string; kind: FeedKind; suggestedGrams: number; actualGrams: number | null }>;
+    medications: Array<{
+      name: string;
+      targetAmount: string;
+      unit: string;
+      given: boolean;
+      givenAt: string | null;
+    }>;
   }>;
 };
 
@@ -51,6 +73,26 @@ export type AgentRecordResult = {
   extra: boolean;
   completedAt: string;
   amounts: AgentFoodAmount[];
+  summary: string;
+};
+export type AgentCorrectionResult = {
+  status: "corrected" | "already_corrected";
+  date: string;
+  mealNumber: number;
+  completedAt: string;
+  amounts: AgentFoodAmount[];
+  summary: string;
+};
+export type AgentMedicationResult = {
+  status: "documented" | "already_documented";
+  changed: boolean;
+  date: string;
+  mealNumber: number;
+  medicationName: string;
+  targetAmount: string;
+  unit: string;
+  given: boolean;
+  givenAt: string | null;
   summary: string;
 };
 
@@ -69,23 +111,7 @@ export async function recordAgentMeal(ownerId: string, input: AgentRecordInput):
   if (date < berlinToday() && !input.time) {
     throw new Error("Für einen vergangenen Tag muss die lokale Uhrzeit angegeben werden.");
   }
-  if (!Array.isArray(input.amounts) || input.amounts.length === 0) {
-    throw new Error("Mindestens eine Futtermenge muss angegeben werden.");
-  }
-
-  const normalizedAmounts = input.amounts.map((amount) => ({
-    foodName: normalizeFoodName(amount.foodName),
-    grams: roundGram(Number(amount.grams)),
-  })).sort((a, b) => a.foodName.localeCompare(b.foodName));
-  if (normalizedAmounts.some((amount) => !amount.foodName || !Number.isFinite(amount.grams) || amount.grams < 0 || amount.grams > 10_000)) {
-    throw new Error("Bitte gültige Futterangaben zwischen 0 und 10.000 g übermitteln.");
-  }
-  if (!normalizedAmounts.some((amount) => amount.grams > 0)) {
-    throw new Error("Mindestens eine Futtermenge muss größer als 0 g sein.");
-  }
-  if (new Set(normalizedAmounts.map((amount) => amount.foodName.toLocaleLowerCase("de-DE"))).size !== normalizedAmounts.length) {
-    throw new Error("Eine Futtersorte wurde doppelt angegeben.");
-  }
+  const normalizedAmounts = normalizeAmounts(input.amounts, true);
 
   const normalizedInput = { ...input, date, amounts: normalizedAmounts };
   const claim = await claimAgentRequest(ownerId, input.idempotencyKey, normalizedInput);
@@ -142,6 +168,127 @@ export async function recordAgentMeal(ownerId: string, input: AgentRecordInput):
   }
 }
 
+export async function correctAgentMeal(ownerId: string, input: AgentCorrectionInput): Promise<AgentCorrectionResult> {
+  const date = input.date ?? berlinToday();
+  assertDate(date);
+  if (date > berlinToday()) throw new Error("Ein Fütterungseintrag kann nicht für einen zukünftigen Tag korrigiert werden.");
+  if (!Number.isInteger(input.mealNumber) || input.mealNumber < 1) {
+    throw new Error("Bitte eine gültige Mahlzeitennummer angeben.");
+  }
+  const normalizedAmounts = normalizeAmounts(input.amounts, false);
+  const normalizedInput = { ...input, date, amounts: normalizedAmounts };
+  const claim = await claimAgentRequest(ownerId, input.idempotencyKey, normalizedInput);
+  if (claim.state === "completed") {
+    return { ...(claim.result as Omit<AgentCorrectionResult, "status">), status: "already_corrected" };
+  }
+  if (claim.state === "pending") {
+    throw new Error("Diese Korrektur wird bereits verarbeitet. Bitte mit derselben idempotency_key erneut versuchen.");
+  }
+
+  try {
+    const state = await getFeedingState(ownerId, date);
+    const meal = state.day?.meals.find((candidate) => candidate.number === input.mealNumber);
+    if (!meal) throw new Error(`Mahlzeit ${input.mealNumber} existiert an diesem Tag nicht.`);
+    if (!meal.completed) throw new Error(`Mahlzeit ${input.mealNumber} ist noch offen und kann nicht korrigiert werden.`);
+    const matched = matchAmounts(meal, normalizedAmounts);
+    if (matched.size !== meal.allocations.length || normalizedAmounts.length !== meal.allocations.length) {
+      throw new Error("Bei einer Korrektur müssen alle Futtersorten dieser Mahlzeit mit ihrer vollständigen Ist-Menge angegeben werden.");
+    }
+    await saveMeal(
+      ownerId,
+      meal.id,
+      meal.allocations.map((allocation) => ({
+        feedItemId: allocation.id,
+        actualGrams: matched.get(allocation.id),
+      })),
+      input.time,
+      "hermes",
+    );
+    const savedDay = await getFeedingDay(ownerId, date);
+    const savedMeal = savedDay?.meals.find((candidate) => candidate.id === meal.id);
+    if (!savedMeal?.completedAt) throw new Error("Die korrigierte Fütterung konnte nicht bestätigt werden.");
+    const result: AgentCorrectionResult = {
+      status: "corrected",
+      date,
+      mealNumber: savedMeal.number,
+      completedAt: savedMeal.completedAt,
+      amounts: savedMeal.allocations.map((allocation) => ({
+        foodName: allocation.name,
+        grams: Number(allocation.actualGrams ?? 0),
+      })),
+      summary: `Korrigiert: ${summarizeMeal(savedMeal).replace(/^Eingetragen: /, "")}`,
+    };
+    await completeAgentRequest(ownerId, input.idempotencyKey, result);
+    return result;
+  } catch (error) {
+    await releaseAgentRequest(ownerId, input.idempotencyKey);
+    throw error;
+  }
+}
+
+export async function documentAgentMedication(
+  ownerId: string,
+  input: AgentMedicationInput,
+): Promise<AgentMedicationResult> {
+  const date = input.date ?? berlinToday();
+  assertDate(date);
+  if (date > berlinToday()) throw new Error("Ein Medikament kann nicht für einen zukünftigen Tag dokumentiert werden.");
+  if (!Number.isInteger(input.mealNumber) || input.mealNumber < 1) {
+    throw new Error("Bitte eine gültige Mahlzeitennummer angeben.");
+  }
+  const medicationName = normalizeFoodName(input.medicationName);
+  if (!medicationName) throw new Error("Bitte den exakten Medikamentennamen angeben.");
+  const normalizedInput = { ...input, date, medicationName };
+  const claim = await claimAgentRequest(ownerId, input.idempotencyKey, normalizedInput);
+  if (claim.state === "completed") {
+    return { ...(claim.result as Omit<AgentMedicationResult, "status">), status: "already_documented" };
+  }
+  if (claim.state === "pending") {
+    throw new Error("Diese Medikamentendokumentation wird bereits verarbeitet. Bitte mit derselben idempotency_key erneut versuchen.");
+  }
+
+  try {
+    const state = await getFeedingState(ownerId, date);
+    const meal = state.day?.meals.find((candidate) => candidate.number === input.mealNumber);
+    if (!meal) throw new Error(`Mahlzeit ${input.mealNumber} existiert an diesem Tag nicht.`);
+    const matches = meal.medications.filter((medication) =>
+      medication.name.toLocaleLowerCase("de-DE") === medicationName.toLocaleLowerCase("de-DE"));
+    if (matches.length === 0) {
+      throw new Error(`„${medicationName}“ ist für Mahlzeit ${input.mealNumber} nicht geplant. Zuerst rosie_tag_anzeigen aufrufen.`);
+    }
+    if (matches.length > 1) {
+      throw new Error(`„${medicationName}“ ist nicht eindeutig. Bitte den exakten Namen aus rosie_tag_anzeigen verwenden.`);
+    }
+    const medication = matches[0];
+    const changed = medication.given !== input.given;
+    if (changed) await setMedicationGiven(ownerId, meal.id, medication.id, input.given);
+    const savedDay = changed ? await getFeedingDay(ownerId, date) : state.day;
+    const savedMedication = savedDay?.meals.find((candidate) => candidate.id === meal.id)
+      ?.medications.find((candidate) => candidate.id === medication.id);
+    if (!savedMedication) throw new Error("Die Medikamentendokumentation konnte nicht bestätigt werden.");
+    const action = input.given ? "als gegeben dokumentiert" : "als nicht gegeben markiert";
+    const result: AgentMedicationResult = {
+      status: "documented",
+      changed,
+      date,
+      mealNumber: meal.number,
+      medicationName: savedMedication.name,
+      targetAmount: savedMedication.targetAmount,
+      unit: savedMedication.unit,
+      given: savedMedication.given,
+      givenAt: savedMedication.givenAt,
+      summary: changed
+        ? `Dokumentiert: ${savedMedication.name} bei Mahlzeit ${meal.number} ${action}.`
+        : `Keine Änderung: ${savedMedication.name} war bei Mahlzeit ${meal.number} bereits ${input.given ? "als gegeben" : "als nicht gegeben"} dokumentiert.`,
+    };
+    await completeAgentRequest(ownerId, input.idempotencyKey, result);
+    return result;
+  } catch (error) {
+    await releaseAgentRequest(ownerId, input.idempotencyKey);
+    throw error;
+  }
+}
+
 function matchAmounts(meal: MealView, amounts: AgentFoodAmount[]): Map<string, number> {
   const result = new Map<string, number>();
   for (const amount of amounts) {
@@ -188,6 +335,13 @@ function serializeDay(
         suggestedGrams: allocation.plannedGrams,
         actualGrams: allocation.actualGrams,
       })),
+      medications: meal.medications.map((medication) => ({
+        name: medication.name,
+        targetAmount: medication.targetAmount,
+        unit: medication.unit,
+        given: medication.given,
+        givenAt: medication.givenAt,
+      })),
     })),
   };
 }
@@ -207,6 +361,26 @@ function summarizeMeal(meal: MealView): string {
 
 function normalizeFoodName(value: string): string {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+}
+
+function normalizeAmounts(amounts: AgentFoodAmount[], requirePositive: boolean): AgentFoodAmount[] {
+  if (!Array.isArray(amounts) || amounts.length === 0) {
+    throw new Error("Mindestens eine Futtermenge muss angegeben werden.");
+  }
+  const normalized = amounts.map((amount) => ({
+    foodName: normalizeFoodName(amount.foodName),
+    grams: roundGram(Number(amount.grams)),
+  })).sort((a, b) => a.foodName.localeCompare(b.foodName));
+  if (normalized.some((amount) => !amount.foodName || !Number.isFinite(amount.grams) || amount.grams < 0 || amount.grams > 10_000)) {
+    throw new Error("Bitte gültige Futterangaben zwischen 0 und 10.000 g übermitteln.");
+  }
+  if (requirePositive && !normalized.some((amount) => amount.grams > 0)) {
+    throw new Error("Mindestens eine Futtermenge muss größer als 0 g sein.");
+  }
+  if (new Set(normalized.map((amount) => amount.foodName.toLocaleLowerCase("de-DE"))).size !== normalized.length) {
+    throw new Error("Eine Futtersorte wurde doppelt angegeben.");
+  }
+  return normalized;
 }
 
 function roundGram(value: number): number {

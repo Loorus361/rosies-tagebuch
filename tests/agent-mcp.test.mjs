@@ -11,7 +11,7 @@ const migrations = [
   "0003_married_william_stryker.sql",
 ];
 
-test("serves the restricted Hermes MCP tools and prevents duplicate feedings", async (t) => {
+test("serves the restricted Hermes MCP tools for feeding, corrections, and medication", async (t) => {
   const miniflare = new Miniflare({
     modules: true,
     scriptPath: fileURLToPath(new URL("../.wrangler/agent-mcp-worker.mjs", import.meta.url)),
@@ -65,13 +65,25 @@ test("serves the restricted Hermes MCP tools and prevents duplicate feedings", a
   assert.equal(initialized.serverInfo.name, "Rosies Tagebuch");
 
   const tools = await mcp(3, "tools/list");
-  assert.deepEqual(tools.tools.map((tool) => tool.name), ["rosie_tag_anzeigen", "rosie_futter_eintragen"]);
+  assert.deepEqual(tools.tools.map((tool) => tool.name), [
+    "rosie_tag_anzeigen",
+    "rosie_futter_eintragen",
+    "rosie_futter_korrigieren",
+    "rosie_medikament_dokumentieren",
+  ]);
 
   const day = await mcp(4, "tools/call", {
     name: "rosie_tag_anzeigen",
     arguments: {},
   });
   assert.equal(day.structuredContent.meals.filter((meal) => meal.status === "open").length, 2);
+  assert.deepEqual(day.structuredContent.meals[0].medications, [{
+    name: "Agent Medikament",
+    targetAmount: "½",
+    unit: "Tablette",
+    given: false,
+    givenAt: null,
+  }]);
 
   const recordArguments = {
     time: "08:17",
@@ -101,10 +113,91 @@ test("serves the restricted Hermes MCP tools and prevents duplicate feedings", a
   });
   assert.equal(repeated.structuredContent.status, "already_recorded");
 
+  const correctionArguments = {
+    meal_number: 1,
+    time: "09:22",
+    amounts: [
+      { food_name: "Agent Nassfutter", grams: 50 },
+      { food_name: "Agent Trockenfutter", grams: 7 },
+    ],
+    idempotency_key: "agent-qa-correction-0001",
+  };
+  const corrected = await mcp(7, "tools/call", {
+    name: "rosie_futter_korrigieren",
+    arguments: correctionArguments,
+  });
+  assert.equal(corrected.structuredContent.status, "corrected");
+  assert.match(corrected.content[0].text, /Korrigiert: 09:22 Uhr/);
+  const repeatedCorrection = await mcp(8, "tools/call", {
+    name: "rosie_futter_korrigieren",
+    arguments: correctionArguments,
+  });
+  assert.equal(repeatedCorrection.structuredContent.status, "already_corrected");
+  const incompleteCorrection = await mcp(81, "tools/call", {
+    name: "rosie_futter_korrigieren",
+    arguments: {
+      meal_number: 1,
+      time: "09:30",
+      amounts: [{ food_name: "Agent Nassfutter", grams: 55 }],
+      idempotency_key: "agent-qa-correction-incomplete",
+    },
+  });
+  assert.equal(incompleteCorrection.isError, true);
+  assert.match(incompleteCorrection.content[0].text, /alle Futtersorten/i);
+
+  const medicationArguments = {
+    meal_number: 1,
+    medication_name: "Agent Medikament",
+    given: true,
+    idempotency_key: "agent-qa-medication-0001",
+  };
+  const medicationGiven = await mcp(9, "tools/call", {
+    name: "rosie_medikament_dokumentieren",
+    arguments: medicationArguments,
+  });
+  assert.equal(medicationGiven.structuredContent.status, "documented");
+  assert.equal(medicationGiven.structuredContent.changed, true);
+  assert.equal(medicationGiven.structuredContent.given, true);
+  assert.equal(medicationGiven.structuredContent.targetAmount, "½");
+  const repeatedMedication = await mcp(10, "tools/call", {
+    name: "rosie_medikament_dokumentieren",
+    arguments: medicationArguments,
+  });
+  assert.equal(repeatedMedication.structuredContent.status, "already_documented");
+
+  const medicationUndone = await mcp(11, "tools/call", {
+    name: "rosie_medikament_dokumentieren",
+    arguments: {
+      ...medicationArguments,
+      given: false,
+      idempotency_key: "agent-qa-medication-0002",
+    },
+  });
+  assert.equal(medicationUndone.structuredContent.given, false);
+  assert.equal(medicationUndone.structuredContent.changed, true);
+  const unplannedMedication = await mcp(12, "tools/call", {
+    name: "rosie_medikament_dokumentieren",
+    arguments: {
+      meal_number: 1,
+      medication_name: "Nicht geplant",
+      given: true,
+      idempotency_key: "agent-qa-medication-unplanned",
+    },
+  });
+  assert.equal(unplannedMedication.isError, true);
+  assert.match(unplannedMedication.content[0].text, /nicht geplant/i);
+
   const stateResponse = await miniflare.dispatchFetch("http://localhost/state");
   const state = await stateResponse.json();
   assert.equal(state.day.meals.filter((meal) => meal.completed).length, 1);
   assert.equal(state.day.meals.find((meal) => meal.completed).recordedVia, "hermes");
-  assert.equal(state.day.totals.find((item) => item.kind === "wet").actualGrams, 45);
-  assert.equal(state.day.totals.find((item) => item.kind === "dry").actualGrams, 8);
+  assert.equal(state.day.totals.find((item) => item.kind === "wet").actualGrams, 50);
+  assert.equal(state.day.totals.find((item) => item.kind === "dry").actualGrams, 7);
+  assert.equal(new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Europe/Berlin",
+  }).format(new Date(state.day.meals.find((meal) => meal.completed).completedAt)), "09:22");
+  assert.equal(state.day.meals[0].medications[0].given, false);
 });

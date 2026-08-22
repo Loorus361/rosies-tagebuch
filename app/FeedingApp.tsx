@@ -482,8 +482,8 @@ function AgentAccessDialog({ onClose }: { onClose: () => void }) {
 
         <div className="agent-access-content">
           <p>
-            Hermes erhält ausschließlich zwei Werkzeuge: den Fütterungstag lesen und Futter in die nächste offene Mahlzeit eintragen.
-            Pläne, Medikamente, Korrekturen und Löschungen bleiben gesperrt.
+            Hermes kann den Fütterungstag lesen, Futter eintragen oder korrigieren und geplante Medikamente dokumentieren.
+            Tagespläne und Löschungen bleiben gesperrt.
           </p>
           {error && <div className="error-banner" role="alert">{error}</div>}
           {!status ? (
