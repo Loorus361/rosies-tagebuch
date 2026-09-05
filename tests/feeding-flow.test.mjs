@@ -52,6 +52,9 @@ test("runs the complete daily feeding flow without changing future defaults", as
   async function post(body, owner) {
     const result = await request("/api/feeding", { method: "POST", body, owner });
     assert.equal(result.response.status, 200, JSON.stringify(result.json));
+    assert.equal(result.json.ok, true);
+    assert.ok(result.json.state, "a successful write returns the refreshed state without another GET");
+    assert.deepEqual(result.json.day, result.json.state.day);
     return result.json;
   }
 

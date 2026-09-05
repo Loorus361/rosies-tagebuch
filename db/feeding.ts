@@ -71,24 +71,23 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
   assertDate(selectedDate);
   const db = getD1();
   const today = berlinToday();
-  const feedRows = await db.prepare(
-    `SELECT id, name, kind FROM feed_items
-     WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`,
-  ).bind(ownerId).all<{ id: string; name: string; kind: FeedKind }>();
-  const feedItems: FeedItem[] = feedRows.results;
-  const medicationRows = await db.prepare(
-    `SELECT id, name FROM medications
-     WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`,
-  ).bind(ownerId).all<Medication>();
-  const medications: Medication[] = medicationRows.results;
-  const lastMeal = await db.prepare(
-    `SELECT m.completed_at
-     FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
-     WHERE d.owner_id = ? AND m.completed_at IS NOT NULL
-     ORDER BY unixepoch(m.completed_at) DESC LIMIT 1`,
-  ).bind(ownerId).first<{ completed_at: string }>();
-  const currentPlan = await readPlan(ownerId, today);
-  const selectedPlan = await readPlan(ownerId, selectedDate);
+  const planPromise = readPlan(ownerId, today);
+  const [feedRows, medicationRows, lastMeal, currentPlan, selectedPlan] = await Promise.all([
+    db.prepare(`SELECT id, name, kind FROM feed_items
+      WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`)
+      .bind(ownerId).all<FeedItem>(),
+    db.prepare(`SELECT id, name FROM medications
+      WHERE owner_id = ? ORDER BY created_at ASC, name COLLATE NOCASE ASC`)
+      .bind(ownerId).all<Medication>(),
+    db.prepare(`SELECT m.completed_at FROM meal_records m JOIN feeding_days d ON d.id = m.day_id
+      WHERE d.owner_id = ? AND m.completed_at IS NOT NULL
+      ORDER BY unixepoch(m.completed_at) DESC LIMIT 1`)
+      .bind(ownerId).first<{ completed_at: string }>(),
+    planPromise,
+    selectedDate === today ? planPromise : readPlan(ownerId, selectedDate),
+  ]);
+  const feedItems = feedRows.results;
+  const medications = medicationRows.results;
   let day: DayView | null = null;
   if (selectedPlan) {
     if (selectedDate > today) day = virtualDay(selectedDate, selectedPlan);
@@ -324,18 +323,20 @@ export async function saveMeal(
     !allocationRows.results.some((row) => row.feed_item_id === item.feedItemId))) {
     throw new Error("Die Futterangaben sind nicht mehr aktuell. Bitte lade den Tag neu.");
   }
-  const targets = await db.prepare(
+  const [targets, otherActuals, otherMeals] = await Promise.all([
+    db.prepare(
     `SELECT feed_item_id, item_name, feed_kind, target_grams FROM feeding_day_items WHERE day_id = ?`,
-  ).bind(meal.day_id).all<DayItemRow>();
-  const otherActuals = await db.prepare(
+  ).bind(meal.day_id).all<DayItemRow>(),
+    db.prepare(
     `SELECT a.feed_item_id, COALESCE(SUM(a.actual_grams), 0) AS total
      FROM meal_allocations a JOIN meal_records m ON m.id = a.meal_id
      WHERE m.day_id = ? AND m.id != ? AND m.completed_at IS NOT NULL GROUP BY a.feed_item_id`,
-  ).bind(meal.day_id, mealId).all<{ feed_item_id: string; total: number }>();
-  const otherMeals = await db.prepare(
+  ).bind(meal.day_id, mealId).all<{ feed_item_id: string; total: number }>(),
+    db.prepare(
     `SELECT id, meal_number, is_extra, completed_at FROM meal_records
      WHERE day_id = ? AND id != ? ORDER BY meal_number`,
-  ).bind(meal.day_id, mealId).all<MealRow>();
+  ).bind(meal.day_id, mealId).all<MealRow>(),
+  ]);
   const openMeals = otherMeals.results.filter((item) => !item.completed_at);
   const wasCompleted = Boolean(meal.completed_at);
   const completedAt = rawCompletedTime === undefined

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   formatElapsedSinceMeal,
   formatExactMealTime,
@@ -8,16 +8,25 @@ import {
 } from "@/lib/feeding-time";
 import type { FeedKind, FeedingState, MealView } from "@/lib/feeding-types";
 
-type Props = { displayName: string };
+type Props = { displayName: string; initialState?: FeedingState | null };
 type Editor = { mealId: string } | null;
 type MedicationPlanDraft = { targetAmount: string; unit: string; mealNumbers: number[] };
 
-export function FeedingApp({ displayName }: Props) {
-  const [selectedDate, setSelectedDate] = useState(() => localDate());
-  const [state, setState] = useState<FeedingState | null>(null);
-  const [loading, setLoading] = useState(true);
+export function FeedingApp({ displayName, initialState = null }: Props) {
+  const [selectedDate, setSelectedDate] = useState(() => initialState?.date ?? localDate());
+  const [state, setState] = useState<FeedingState | null>(initialState);
+  const [loading, setLoading] = useState(!initialState);
+  const [refreshing, setRefreshing] = useState(false);
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const [mutating, setMutating] = useState(false);
+  const activeDate = useRef(initialState?.date ?? localDate());
+  const cache = useRef(new Map<string, FeedingState>(initialState ? [[initialState.date, initialState]] : []));
+  const requestId = useRef(0);
+  const controller = useRef<AbortController | null>(null);
+  const writing = useRef(false);
+  const dirty = useRef(false);
   const [error, setError] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(Boolean(initialState && (!initialState.currentPlan || !initialState.feedItems.length)));
   const [agentAccessOpen, setAgentAccessOpen] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
@@ -27,22 +36,52 @@ export function FeedingApp({ displayName }: Props) {
   const [timerNow, setTimerNow] = useState(() => Date.now());
 
   const load = useCallback(async (date: string) => {
+    const id = ++requestId.current;
+    controller.current?.abort();
+    const pending = new AbortController();
+    controller.current = pending;
+    setRefreshing(true);
     try {
-      const response = await fetch(`/api/feeding?date=${encodeURIComponent(date)}`);
+      const response = await fetch(`/api/feeding?date=${encodeURIComponent(date)}`, {
+        signal: pending.signal, cache: "no-store",
+      });
       const data = await response.json() as FeedingState & { error?: string };
       if (!response.ok) throw new Error(data.error || "Der Tag konnte nicht geladen werden.");
+      if (id !== requestId.current || date !== activeDate.current) return;
+      cache.current.set(date, data);
+      if (cache.current.size > 14) cache.current.delete(cache.current.keys().next().value!);
       setState(data);
+      setNeedsRefresh(false);
+      setError("");
       if (!data.currentPlan || data.feedItems.length === 0) setSettingsOpen(true);
     } catch (loadError) {
-      setError(messageOf(loadError));
+      if (id === requestId.current && !pending.signal.aborted) setError(messageOf(loadError));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
-  // Loading the selected date is the external synchronization this effect owns.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(selectedDate); }, [load, selectedDate]);
+  useEffect(() => {
+    if (!initialState) void load(activeDate.current);
+    const refresh = () => {
+      if (document.visibilityState === "visible" && !writing.current && !dirty.current) {
+        void load(activeDate.current);
+      }
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.current?.abort();
+      // This counter invalidates requests, rather than referencing a DOM node.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      ++requestId.current;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [initialState, load]);
 
   useEffect(() => {
     if (!state?.lastMealAt || state.today !== selectedDate) return;
@@ -51,32 +90,56 @@ export function FeedingApp({ displayName }: Props) {
   }, [selectedDate, state?.lastMealAt, state?.today]);
 
   async function mutate(body: Record<string, unknown>, keepSettings = false) {
+    if (writing.current) throw new Error("Bitte warte, bis die laufende Änderung gespeichert ist.");
+    writing.current = true;
+    setMutating(true);
     setError("");
-    const response = await fetch("/api/feeding", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error || "Die Änderung konnte nicht gespeichert werden.");
-    await load(selectedDate);
-    setSettingsOpen(keepSettings);
+    controller.current?.abort();
+    ++requestId.current;
+    setRefreshing(false);
+    const date = activeDate.current;
+    try {
+      const response = await fetch("/api/feeding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...body, selectedDate: date }),
+      });
+      const result = await response.json() as { error?: string; refreshError?: string; state?: FeedingState };
+      if (!response.ok) throw new Error(result.error || "Die Änderung konnte nicht gespeichert werden.");
+      cache.current.clear();
+      dirty.current = false;
+      if (result.state && activeDate.current === date) {
+        cache.current.set(date, result.state);
+        setState(result.state);
+      } else {
+        setError(result.refreshError || "Gespeichert. Bitte aktualisiere die Ansicht.");
+        setNeedsRefresh(true);
+      }
+      setSettingsOpen(keepSettings);
+    } finally {
+      writing.current = false;
+      setMutating(false);
+    }
   }
 
   function moveDay(offset: number) {
-    const date = new Date(`${selectedDate}T12:00:00Z`);
+    const date = new Date(`${activeDate.current}T12:00:00Z`);
     date.setUTCDate(date.getUTCDate() + offset);
-    setLoading(true);
-    setError("");
-    setSelectedDate(date.toISOString().slice(0, 10));
-    setEditor(null);
+    selectDay(date.toISOString().slice(0, 10));
   }
 
   function selectDay(date: string) {
-    setLoading(true);
+    if (!date || date === activeDate.current || writing.current) return;
+    activeDate.current = date;
+    dirty.current = false;
+    const cached = cache.current.get(date);
+    setNeedsRefresh(false);
+    setState(cached ?? null);
+    setLoading(!cached);
     setError("");
     setSelectedDate(date);
     setEditor(null);
+    void load(date);
   }
 
   function openMeal(meal: MealView) {
@@ -170,7 +233,7 @@ export function FeedingApp({ displayName }: Props) {
   const completed = state?.day?.meals.filter((meal) => meal.completed).length ?? 0;
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" onChangeCapture={() => { dirty.current = true; }}>
       <header className="topbar">
         <div>
           <p className="eyebrow">Rosies Tagebuch</p>
@@ -190,27 +253,29 @@ export function FeedingApp({ displayName }: Props) {
         <div>
           <p className="date-kicker">{isToday ? "Heute" : state?.day?.virtual ? "Vorschau" : "Tagebuch"}</p>
           <h2 id="day-title">{selectedLabel}</h2>
-          <p className="day-subline">{isToday ? "Ein ruhiger Blick auf Rosies Tag." : "Plan und Einträge dieses Tages."}</p>
+
         </div>
         <div className="date-controls" aria-label="Tag auswählen">
-          <button className="icon-button" type="button" onClick={() => moveDay(-1)} aria-label="Vorheriger Tag">←</button>
+          <button className="icon-button" type="button" disabled={mutating} onClick={() => moveDay(-1)} aria-label="Vorheriger Tag">←</button>
           <input
+            disabled={mutating}
             className="date-input"
             type="date"
             value={selectedDate}
             onChange={(event) => selectDay(event.target.value)}
             aria-label="Datum"
           />
-          <button className="icon-button" type="button" onClick={() => moveDay(1)} aria-label="Nächster Tag">→</button>
+          <button className="icon-button" type="button" disabled={mutating} onClick={() => moveDay(1)} aria-label="Nächster Tag">→</button>
           {!isToday && <button className="text-button" type="button" onClick={() => selectDay(state?.today ?? localDate())}>Heute</button>}
         </div>
       </section>
 
-      {error && <div className="error-banner" role="alert">{error}</div>}
+      {error && <div className="error-banner" role="alert">{error} <button className="text-button" disabled={mutating || refreshing} onClick={() => void load(activeDate.current)}>Erneut laden</button></div>}
+      {refreshing && !loading && <p className="refresh-status" role="status">Wird aktualisiert …</p>}
       {loading && <LoadingDay />}
 
       {!loading && state && (
-        <>
+        <fieldset className="day-content" disabled={mutating || refreshing || needsRefresh}>
           {state.day ? (
             <>
               <section className="summary-card" aria-label="Tagesübersicht">
@@ -248,7 +313,11 @@ export function FeedingApp({ displayName }: Props) {
                         <span className={`kind-badge ${item.kind}`}>{kindLabel(item.kind)}</span>
                         <h3>{item.name}</h3>
                       </div>
-                      <strong>{grams(item.remainingGrams)} offen</strong>
+                      <strong className={item.actualGrams > item.targetGrams ? "over-target" : undefined}>
+                        {item.actualGrams > item.targetGrams
+                          ? `${grams(item.actualGrams - item.targetGrams)} über Tagesvorgabe`
+                          : `${grams(item.remainingGrams)} offen`}
+                      </strong>
                     </div>
                     <div className="amount-row">
                       <span><b>{grams(item.targetGrams)}</b> geplant</span>
@@ -388,7 +457,7 @@ export function FeedingApp({ displayName }: Props) {
               </div>
             </section>
           )}
-        </>
+        </fieldset>
       )}
 
       {settingsOpen && state && (

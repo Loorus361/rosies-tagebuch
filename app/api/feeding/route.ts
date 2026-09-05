@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getChatGPTUser, isRosieOwner } from "@/app/chatgpt-auth";
-import {
-  assertDate,
-  addExtraMeal,
-  berlinToday,
-  createFeedItem,
-  createMedication,
-  getFeedingDay,
-  getFeedingState,
-  removeCompletedMeal,
-  removeOpenMeal,
-  saveMeal,
-  savePlan,
-  setMedicationGiven,
-} from "@/db/feeding";
+import { assertDate, berlinToday, getFeedingState } from "@/db/feeding";
+import { mutateFeeding } from "@/db/feeding-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +12,7 @@ export async function GET(request: NextRequest) {
   try {
     const date = request.nextUrl.searchParams.get("date") ?? berlinToday();
     assertDate(date);
-    return NextResponse.json(await getFeedingState(user.userId, date));
+    return NextResponse.json(await getFeedingState(user.userId, date), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return apiError(error);
   }
@@ -36,39 +24,7 @@ export async function POST(request: NextRequest) {
   if (!(await isRosieOwner(user))) return NextResponse.json({ error: "Kein Zugriff." }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
-    switch (body.action) {
-      case "create_item":
-        await createFeedItem(user.userId, body.name, body.kind);
-        break;
-      case "create_medication":
-        await createMedication(user.userId, body.name);
-        break;
-      case "save_plan":
-        await savePlan(user.userId, body);
-        break;
-      case "save_meal":
-        await saveMeal(user.userId, body.mealId, body.actuals, body.completedTime);
-        break;
-      case "add_extra_meal":
-        assertDate(body.date);
-        await addExtraMeal(user.userId, body.date);
-        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, body.date) });
-      case "remove_meal": {
-        const date = await removeOpenMeal(user.userId, body.mealId);
-        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
-      }
-      case "delete_meal_entry": {
-        const date = await removeCompletedMeal(user.userId, body.mealId);
-        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
-      }
-      case "set_medication_given": {
-        const date = await setMedicationGiven(user.userId, body.mealId, body.medicationId, body.given);
-        return NextResponse.json({ ok: true, day: await getFeedingDay(user.userId, date) });
-      }
-      default:
-        return NextResponse.json({ error: "Unbekannte Aktion." }, { status: 400 });
-    }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json(await mutateFeeding(user.userId, body));
   } catch (error) {
     return apiError(error);
   }
