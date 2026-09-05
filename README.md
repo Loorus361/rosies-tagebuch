@@ -48,3 +48,13 @@ nicht Teil des MCP-Servers; eine Dosierung wird nie berechnet.
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+
+## Flexibler Futterausgleich
+
+Die Standardmengen bleiben die Basis. `lib/feeding-energy.ts` berechnet bei jedem Lesen des Tages die offenen Vorschläge aus den tatsächlichen Einträgen neu; gespeicherte Vorschläge sind keine verbindlichen Restmengen. Das gilt auch für Hermes. Überschüsse gleichen Defizite anderer Sorten aus, die verbleibende Mischung orientiert sich an den noch nicht gefütterten Standardmengen (Rundung auf 0,1 g).
+
+Sind für alle verwendeten Sorten kcal/100 g bekannt, gilt ein gemeinsames Energiebudget aus `Summe(Standardgramm × kcal/100 g / 100)`. Andernfalls bleiben Nasssorten getrennt; Trockenfutter wird mit vollständigen Trockenfutter-Energiewerten gewichtet, sonst ausdrücklich näherungsweise 1:1 verrechnet. Es werden keine Herstellerwerte anhand eines Markennamens geraten.
+
+Energiewerte werden separat mit `save_energy` gespeichert und gelten ab dem aktuellen Berliner Datum. Die append-only Tabelle `feed_energy_versions` erhält frühere Werte für frühere Tage. Leere Werte bedeuten unbekannt. Tagespläne, tatsächliche Fütterungsmengen und Medikamente werden durch diese Einstellung nicht geändert.
+
+Herstellerbeispiele (geprüft am 05.09.2026): [Platinum Adult Chicken](https://www.platinum.com/Hund/Produkte-Hundefutter/Trockenfutter/Adult-Chicken.html) 364,4 kcal/100 g; [Royal Canin Gastrointestinal trocken](https://www.royalcanin.com/de/dogs/products/vet-products/gastrointestinal-3911) 412,6 kcal/100 g; [Gastrointestinal Mousse](https://www.royalcanin.com/de/dogs/products/vet-products/gastrointestinal-4038) 110,4 kcal/100 g. 100 g dieser Mousse entsprechen energetisch ca. 26,8 g des genannten Trockenfutters, nicht pauschal 10 g. Maßgeblich ist die konkrete Packung; Energiegleichheit garantiert keine gleiche Nährstoffzusammensetzung.

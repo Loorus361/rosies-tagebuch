@@ -9,6 +9,7 @@ import {
   removeOpenMeal,
   saveMeal,
   savePlan,
+  saveFeedEnergy,
   setMedicationGiven,
 } from "./feeding";
 
@@ -21,6 +22,9 @@ export async function mutateFeeding(ownerId: string, body: Record<string, unknow
       break;
     case "create_medication":
       await createMedication(ownerId, body.name);
+      break;
+    case "save_energy":
+      await saveFeedEnergy(ownerId, body.items);
       break;
     case "save_plan":
       await savePlan(ownerId, body);

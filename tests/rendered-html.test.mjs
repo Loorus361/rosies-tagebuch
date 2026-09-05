@@ -25,7 +25,7 @@ async function runtime(t) {
   });
   t.after(() => mf.dispose());
   const db = await mf.getD1Database("DB");
-  for (const name of ["0000_loose_sabra.sql", "0001_rare_emma_frost.sql", "0002_blushing_purifiers.sql", "0003_married_william_stryker.sql"]) {
+  for (const name of ["0000_loose_sabra.sql", "0001_rare_emma_frost.sql", "0002_blushing_purifiers.sql", "0003_married_william_stryker.sql", "0004_flawless_warpath.sql"]) {
     const sql = await readFile(new URL(`../drizzle/${name}`, import.meta.url), "utf8");
     for (const statement of sql.split("--> statement-breakpoint").map(s => s.trim()).filter(Boolean)) await db.prepare(statement).run();
   }
@@ -55,7 +55,8 @@ test("renders real initial data and returns updated data directly after saving",
   const html = await response.text();
   assert.match(html, /<title>Rosies Tagebuch · Fütterung<\/title>/i);
   assert.match(html, /Testfutter/);
-  assert.match(html, /10 g über Tagesvorgabe/);
+  assert.match(html, /Flexibler Trockenfutter-Ausgleich/);
+  assert.match(html, /noch vorgeschlagen/);
   assert.doesNotMatch(html, /Rosies Fütterung wird geladen/);
 });
 

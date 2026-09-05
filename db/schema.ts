@@ -122,3 +122,15 @@ export const mealMedications = sqliteTable("meal_medications", {
   unit: text("unit").notNull(),
   givenAt: text("given_at"),
 }, (table) => [primaryKey({ columns: [table.mealId, table.medicationId] })]);
+
+// Effective-date history keeps later energy edits out of earlier diary days.
+export const feedEnergyVersions = sqliteTable("feed_energy_versions", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  feedItemId: text("feed_item_id").notNull().references(() => feedItems.id),
+  kcalPer100g: real("kcal_per_100g"),
+  effectiveDate: text("effective_date").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_feed_energy_owner_item_date").on(table.ownerId, table.feedItemId, table.effectiveDate, table.createdAt),
+]);

@@ -257,3 +257,13 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .total-title-row > .over-target { white-space: normal; text-align: right; max-width: 130px; }
 .meal-heading > .meal-status-block { display: grid; flex-shrink: 0; }
 .meal-heading h3 { white-space: nowrap; }
+
+.balance-card { margin: 0 0 20px; padding: 22px 26px; border: 1px solid var(--border, #ded4c7); border-radius: 20px; background: var(--surface, #fffdf8); }
+.balance-card h3 { margin: 0 0 8px; }
+.balance-card p { margin: 8px 0 0; }
+.balance-number { font-size: 1.6rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.energy-form { display: grid; gap: 12px; padding: 18px 0; }
+.energy-form .amount-input-row { gap: 12px; }
+.energy-form .input-with-unit { flex-shrink: 0; }
+.energy-form input { width: 95px; }
+@media (max-width: 480px) { .energy-form .amount-input-row { flex-wrap: wrap; } }

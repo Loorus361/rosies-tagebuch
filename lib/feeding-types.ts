@@ -1,6 +1,6 @@
 export type FeedKind = "wet" | "dry";
 
-export type FeedItem = { id: string; name: string; kind: FeedKind };
+export type FeedItem = { id: string; name: string; kind: FeedKind; kcalPer100g?: number | null };
 export type Medication = { id: string; name: string };
 export type PlanMedication = Medication & {
   targetAmount: string;
@@ -46,6 +46,7 @@ export type DayView = {
   mealCount: number;
   effectiveDate: string;
   virtual: boolean;
+  balance?: { mode: "energy" | "approximate"; targetKcal: number | null; actualKcal: number | null };
   totals: DayTotal[];
   meals: MealView[];
 };

@@ -8,7 +8,7 @@ const migrations = [
   "0000_loose_sabra.sql",
   "0001_rare_emma_frost.sql",
   "0002_blushing_purifiers.sql",
-  "0003_married_william_stryker.sql",
+  "0003_married_william_stryker.sql", "0004_flawless_warpath.sql",
 ];
 
 test("serves the restricted Hermes MCP tools for feeding, corrections, and medication", async (t) => {

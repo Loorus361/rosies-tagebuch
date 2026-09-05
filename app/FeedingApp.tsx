@@ -305,6 +305,15 @@ export function FeedingApp({ displayName, initialState = null }: Props) {
                 </button>
               </section>
 
+              <section className="balance-card" aria-label="Flexibler Futterausgleich">
+                <h3>{state.day.balance?.mode === "energy" ? "Gemeinsames Energiebudget" : "Flexibler Trockenfutter-Ausgleich"}</h3>
+                {state.day.balance?.mode === "energy" ? <>
+                  <p className="balance-number">{numberText(state.day.balance.actualKcal ?? 0)} / {numberText(state.day.balance.targetKcal ?? 0)} kcal</p>
+                  <p>{numberText(Math.abs((state.day.balance.targetKcal ?? 0) - (state.day.balance.actualKcal ?? 0)))} kcal {(state.day.balance.actualKcal ?? 0) > (state.day.balance.targetKcal ?? 0) ? "über dem Tagesbudget" : "noch offen"}</p>
+                  <p className="muted">Das Budget kommt aus deinen Standardmengen. Mehr von einer Sorte gleicht weniger von einer anderen aus.</p>
+                </> : <><p><b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.actualGrams, 0))}</b> Trockenfutter gefüttert · <b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.targetGrams, 0))}</b> Standard gesamt</p><p className="muted">Trockenfutter gleicht sich untereinander aus – ohne vollständige kcal-Angaben ungefähr 1:1 nach Gramm. Nassfutter bleibt getrennt. Hinterlege für alle verwendeten Sorten den Energiegehalt, um auch Nass und Trocken auszugleichen.</p></>}
+              </section>
+
               <section className="totals-grid" aria-label="Mengen je Futtersorte">
                 {state.day.totals.map((item) => (
                   <article className="total-card" key={item.id}>
@@ -313,14 +322,10 @@ export function FeedingApp({ displayName, initialState = null }: Props) {
                         <span className={`kind-badge ${item.kind}`}>{kindLabel(item.kind)}</span>
                         <h3>{item.name}</h3>
                       </div>
-                      <strong className={item.actualGrams > item.targetGrams ? "over-target" : undefined}>
-                        {item.actualGrams > item.targetGrams
-                          ? `${grams(item.actualGrams - item.targetGrams)} über Tagesvorgabe`
-                          : `${grams(item.remainingGrams)} offen`}
-                      </strong>
+                      <strong>{grams(item.remainingGrams)} noch vorgeschlagen</strong>
                     </div>
                     <div className="amount-row">
-                      <span><b>{grams(item.targetGrams)}</b> geplant</span>
+                      <span><b>{grams(item.targetGrams)}</b> Standard</span>
                       <span><b>{grams(item.actualGrams)}</b> gefüttert</span>
                     </div>
                     <div className="progress-track" aria-label={`${grams(item.actualGrams)} von ${grams(item.targetGrams)} gefüttert`}>
@@ -754,6 +759,10 @@ function SettingsDialog({
 }) {
   const selectedTargets = state.date >= state.today ? state.day?.totals : null;
   const [name, setName] = useState("");
+  const [energyValues, setEnergyValues] = useState<Record<string, string>>(() => Object.fromEntries(
+    state.feedItems.map((item) => [item.id, item.kcalPer100g == null ? "" : String(item.kcalPer100g)]),
+  ));
+  const [energySaved, setEnergySaved] = useState(false);
   const [medicationName, setMedicationName] = useState("");
   const [kind, setKind] = useState<FeedKind>("wet");
   const [mealCount, setMealCount] = useState(String(state.day?.mealCount ?? state.currentPlan?.mealCount ?? 3));
@@ -790,6 +799,19 @@ function SettingsDialog({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function submitEnergy(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setEnergySaved(false);
+    try {
+      await onMutate({ action: "save_energy", items: state.feedItems.map((item) => ({
+        feedItemId: item.id, kcalPer100g: energyValues[item.id] ?? "",
+      })) }, true);
+      setEnergySaved(true);
+    } catch (error) { onError(messageOf(error)); }
+    finally { setSaving(false); }
   }
 
   async function addMedication(event: FormEvent) {
@@ -862,6 +884,20 @@ function SettingsDialog({
           <div className="settings-panel">
             <h3>Futterbausteine</h3>
             <p className="muted">Jede Sorte bleibt einzeln sichtbar – auch während einer Umstellung.</p>
+            {state.feedItems.length > 0 && <form className="energy-form" onSubmit={(event) => void submitEnergy(event)}>
+              <h3>Energiegehalt</h3>
+              <p className="muted">kcal pro 100 g laut Packung der konkreten Sorte. Angaben in kcal/kg durch 10 teilen. Unbekannte Werte leer lassen.</p>
+              {state.feedItems.map((item) => <label className="amount-input-row" key={item.id}>
+                <span>{item.name}</span>
+                <span className="input-with-unit"><input type="number" min="0.1" max="1000" step="0.1"
+                  aria-label={`Energiegehalt ${item.name} in kcal pro 100 g`} placeholder="Unbekannt"
+                  value={energyValues[item.id] ?? ""} onChange={(event) => { setEnergySaved(false); setEnergyValues({ ...energyValues, [item.id]: event.target.value }); }} />
+                  <span>kcal</span></span>
+              </label>)}
+              <p className="muted">Gilt ab heute. Frühere Tage und deine Standardmengen bleiben erhalten. Gleiche Energie bedeutet nicht gleiche Nährstoffzusammensetzung.</p>
+              <button className="secondary-button" type="submit" disabled={saving}>Energiewerte speichern</button>
+              {energySaved && <p role="status">Energiewerte gespeichert.</p>}
+            </form>}
             <div className="food-chip-list">
               {state.feedItems.map((item) => (
                 <span className="food-chip" key={item.id}><span className={`food-dot ${item.kind}`} />{item.name}<small>{kindLabel(item.kind)}</small></span>
@@ -1081,4 +1117,8 @@ function medicationPlansForSettings(state: FeedingState): Array<{
     });
   }));
   return [...plans.values()];
+}
+
+function numberText(value: number) {
+  return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(value);
 }

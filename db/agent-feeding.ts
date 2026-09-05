@@ -41,11 +41,13 @@ export type AgentDayResult = {
   date: string;
   today: string;
   lastMealAt: string | null;
+  balance: DayView["balance"];
   foods: Array<{ name: string; kind: FeedKind }>;
   totals: Array<{
     name: string;
     kind: FeedKind;
     targetGrams: number;
+    kcalPer100g: number | null;
     fedGrams: number;
     remainingGrams: number;
   }>;
@@ -315,11 +317,13 @@ function serializeDay(
     date: day.date,
     today,
     lastMealAt,
+    balance: day.balance,
     foods: foods.map((food) => ({ name: food.name, kind: food.kind })),
     totals: day.totals.map((total) => ({
       name: total.name,
       kind: total.kind,
       targetGrams: total.targetGrams,
+      kcalPer100g: total.kcalPer100g ?? null,
       fedGrams: total.actualGrams,
       remainingGrams: total.remainingGrams,
     })),

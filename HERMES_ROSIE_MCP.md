@@ -211,3 +211,7 @@ Kennung könnte eine doppelte Änderung verursachen.
 
 Bei Verdacht auf einen offengelegten Schlüssel muss Carlos in Rosies Tagebuch
 unter **Hermes verbinden** den Zugang widerrufen oder einen neuen erstellen.
+
+### Flexibler Futterausgleich
+
+`rosie_tag_anzeigen` enthält zusätzlich `balance` (Modus, Tagesziel und gefütterte kcal, bei fehlenden Werten null) sowie `kcalPer100g` je Tages-Futtersorte. `targetGrams` beschreibt weiterhin die Standardmischung, `remainingGrams` und `suggestedGrams` berücksichtigen den sortenübergreifenden Ausgleich. Diese Restmengen verwenden, nicht selbst `targetGrams - fedGrams` rechnen. Ohne vollständige Energiewerte wird Trockenfutter näherungsweise 1:1 verrechnet (mit vollständigen Trockenwerten gewichtet); Nasssorten bleiben getrennt. Energiewerte lassen sich ausschließlich in der App ändern.

@@ -1,3 +1,4 @@
+import { balanceDay } from "@/lib/feeding-energy";
 import { getD1 } from "./index";
 import type {
   DayTotal,
@@ -86,7 +87,8 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
     planPromise,
     selectedDate === today ? planPromise : readPlan(ownerId, selectedDate),
   ]);
-  const feedItems = feedRows.results;
+  const energy = await readEnergy(ownerId, today);
+  const feedItems = feedRows.results.map((item) => ({ ...item, kcalPer100g: energy.get(item.id) ?? null }));
   const medications = medicationRows.results;
   let day: DayView | null = null;
   if (selectedPlan) {
@@ -98,6 +100,7 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
   } else if (selectedDate <= today) {
     day = await readDay(ownerId, selectedDate);
   }
+  if (day) day = balanceDay(day, await readEnergy(ownerId, selectedDate));
   return {
     date: selectedDate,
     today,
@@ -111,7 +114,8 @@ export async function getFeedingState(ownerId: string, selectedDate: string): Pr
 
 export async function getFeedingDay(ownerId: string, selectedDate: string): Promise<DayView | null> {
   assertDate(selectedDate);
-  return readDay(ownerId, selectedDate);
+  const day = await readDay(ownerId, selectedDate);
+  return day ? balanceDay(day, await readEnergy(ownerId, selectedDate)) : null;
 }
 
 export async function createFeedItem(ownerId: string, rawName: unknown, rawKind: unknown): Promise<void> {
@@ -933,4 +937,34 @@ function berlinTimestampForInstant(instant: Date): string {
 
 function padTime(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+async function readEnergy(ownerId: string, date: string): Promise<Map<string, number | null>> {
+  const rows = await getD1().prepare(`SELECT feed_item_id, kcal_per_100g FROM feed_energy_versions
+    WHERE owner_id = ? AND effective_date <= ? ORDER BY effective_date, created_at, rowid`)
+    .bind(ownerId, date).all<{ feed_item_id: string; kcal_per_100g: number | null }>();
+  return new Map(rows.results.map((row) => [row.feed_item_id, row.kcal_per_100g]));
+}
+
+export async function saveFeedEnergy(ownerId: string, rawItems: unknown): Promise<void> {
+  if (!Array.isArray(rawItems) || rawItems.length === 0) throw new Error("Bitte Futterwerte angeben.");
+  const items = rawItems.map((raw) => {
+    const item = raw as { feedItemId?: unknown; kcalPer100g?: unknown };
+    const kcal = item.kcalPer100g === null || item.kcalPer100g === "" ? null : Number(item.kcalPer100g);
+    if (typeof item.feedItemId !== "string" || (kcal !== null && (!Number.isFinite(kcal) || kcal <= 0 || kcal > 1000))) {
+      throw new Error("Energiegehalt: leer lassen oder mehr als 0 bis 1.000 kcal pro 100 g eingeben.");
+    }
+    return { id: item.feedItemId, kcal };
+  });
+  if (new Set(items.map((item) => item.id)).size !== items.length) throw new Error("Futter doppelt angegeben.");
+  const db = getD1();
+  const owned = await db.prepare("SELECT id FROM feed_items WHERE owner_id = ?").bind(ownerId).all<{ id: string }>();
+  if (items.some((item) => !owned.results.some((row) => row.id === item.id))) throw new Error("Dieses Futter gehört nicht zu deinem privaten Bereich.");
+  const today = berlinToday();
+  const previous = await readEnergy(ownerId, today);
+  const changed = items.filter((item) => (previous.get(item.id) ?? null) !== item.kcal);
+  if (!changed.length) return;
+  await db.batch(changed.map((item) => db.prepare(`INSERT INTO feed_energy_versions
+    (id, owner_id, feed_item_id, kcal_per_100g, effective_date, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), ownerId, item.id, item.kcal, today, new Date().toISOString())));
 }
