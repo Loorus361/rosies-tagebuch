@@ -7,14 +7,14 @@ export function balanceDay(day: DayView, energy: Map<string, number | null>): Da
   const totals = day.totals.map((item) => ({ ...item, kcalPer100g: energy.get(item.id) ?? null }));
   const relevant = totals.filter((item) => item.targetGrams > 0 || item.actualGrams > 0);
   const allKnown = relevant.length > 0 && relevant.every((item) => (item.kcalPer100g ?? 0) > 0);
-  const dry = totals.filter((item) => item.kind === "dry");
-  const dryKnown = dry.every((item) => (item.kcalPer100g ?? 0) > 0);
-  const groups: Array<{ items: DayTotal[]; weighted: boolean }> = allKnown
-    ? [{ items: relevant, weighted: true }]
-    : [
-      { items: dry, weighted: dryKnown },
-      ...totals.filter((item) => item.kind === "wet").map((item) => ({ items: [item], weighted: false })),
-    ];
+  const known = relevant.filter((item) => (item.kcalPer100g ?? 0) > 0);
+  const unknown = relevant.filter((item) => !(item.kcalPer100g! > 0));
+  const groups: Array<{ items: DayTotal[]; weighted: boolean }> = [
+    // Known wet and dry foods always share their calorie budget.
+    { items: known, weighted: true },
+    { items: unknown.filter((item) => item.kind === "dry"), weighted: false },
+    ...unknown.filter((item) => item.kind === "wet").map((item) => ({ items: [item], weighted: false })),
+  ];
   const remaining = new Map<string, number>();
   for (const group of groups) {
     const weight = (item: DayTotal) => group.weighted ? (item.kcalPer100g ?? 0) / 100 : 1;

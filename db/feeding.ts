@@ -950,7 +950,11 @@ export async function saveFeedEnergy(ownerId: string, rawItems: unknown): Promis
   if (!Array.isArray(rawItems) || rawItems.length === 0) throw new Error("Bitte Futterwerte angeben.");
   const items = rawItems.map((raw) => {
     const item = raw as { feedItemId?: unknown; kcalPer100g?: unknown };
-    const kcal = item.kcalPer100g === null || item.kcalPer100g === "" ? null : Number(item.kcalPer100g);
+    const rawValue = item.kcalPer100g;
+    const normalized = typeof rawValue === "string" ? rawValue.trim().replace(",", ".") : rawValue;
+    const kcal = normalized === null || normalized === "" ? null
+      : typeof normalized === "number" ? normalized
+      : typeof normalized === "string" && /^\d+(?:\.\d+)?$/.test(normalized) ? Number(normalized) : NaN;
     if (typeof item.feedItemId !== "string" || (kcal !== null && (!Number.isFinite(kcal) || kcal <= 0 || kcal > 1000))) {
       throw new Error("Energiegehalt: leer lassen oder mehr als 0 bis 1.000 kcal pro 100 g eingeben.");
     }

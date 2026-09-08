@@ -306,12 +306,12 @@ export function FeedingApp({ displayName, initialState = null }: Props) {
               </section>
 
               <section className="balance-card" aria-label="Flexibler Futterausgleich">
-                <h3>{state.day.balance?.mode === "energy" ? "Gemeinsames Energiebudget" : "Flexibler Trockenfutter-Ausgleich"}</h3>
+                <h3>{state.day.balance?.mode === "energy" ? "Gemeinsames Energiebudget" : "Flexibler Futterausgleich"}</h3>
                 {state.day.balance?.mode === "energy" ? <>
                   <p className="balance-number">{numberText(state.day.balance.actualKcal ?? 0)} / {numberText(state.day.balance.targetKcal ?? 0)} kcal</p>
                   <p>{numberText(Math.abs((state.day.balance.targetKcal ?? 0) - (state.day.balance.actualKcal ?? 0)))} kcal {(state.day.balance.actualKcal ?? 0) > (state.day.balance.targetKcal ?? 0) ? "über dem Tagesbudget" : "noch offen"}</p>
-                  <p className="muted">Das Budget kommt aus deinen Standardmengen. Mehr von einer Sorte gleicht weniger von einer anderen aus.</p>
-                </> : <><p><b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.actualGrams, 0))}</b> Trockenfutter gefüttert · <b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.targetGrams, 0))}</b> Standard gesamt</p><p className="muted">Trockenfutter gleicht sich untereinander aus – ohne vollständige kcal-Angaben ungefähr 1:1 nach Gramm. Nassfutter bleibt getrennt. Hinterlege für alle verwendeten Sorten den Energiegehalt, um auch Nass und Trocken auszugleichen.</p></>}
+                  <p className="muted">Das Budget kommt aus deinen Standardmengen. Mehr Nassfutter reduziert das noch vorgeschlagene Trockenfutter und umgekehrt – nach Kalorien.</p>
+                </> : <><p><b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.actualGrams, 0))}</b> Trockenfutter gefüttert · <b>{grams(state.day.totals.filter((item) => item.kind === "dry").reduce((sum, item) => sum + item.targetGrams, 0))}</b> Standard gesamt</p><p className="muted">Nass- und Trockenfutter mit kcal-Angaben gleichen sich gegenseitig nach Kalorien aus. Sorten ohne kcal-Angabe bleiben außerhalb dieses Energiebudgets; unbekannte Trockenfutter-Sorten gleichen sich untereinander ungefähr 1:1 nach Gramm aus. Für den vollständigen Ausgleich bitte die fehlenden Werte ergänzen.</p></>}
               </section>
 
               <section className="totals-grid" aria-label="Mengen je Futtersorte">
@@ -760,7 +760,7 @@ function SettingsDialog({
   const selectedTargets = state.date >= state.today ? state.day?.totals : null;
   const [name, setName] = useState("");
   const [energyValues, setEnergyValues] = useState<Record<string, string>>(() => Object.fromEntries(
-    state.feedItems.map((item) => [item.id, item.kcalPer100g == null ? "" : String(item.kcalPer100g)]),
+    state.feedItems.map((item) => [item.id, item.kcalPer100g == null ? "" : String(item.kcalPer100g).replace(".", ",")]),
   ));
   const [energySaved, setEnergySaved] = useState(false);
   const [medicationName, setMedicationName] = useState("");
@@ -886,10 +886,10 @@ function SettingsDialog({
             <p className="muted">Jede Sorte bleibt einzeln sichtbar – auch während einer Umstellung.</p>
             {state.feedItems.length > 0 && <form className="energy-form" onSubmit={(event) => void submitEnergy(event)}>
               <h3>Energiegehalt</h3>
-              <p className="muted">kcal pro 100 g laut Packung der konkreten Sorte. Angaben in kcal/kg durch 10 teilen. Unbekannte Werte leer lassen.</p>
+              <p className="muted">kcal pro 100 g laut Packung der konkreten Sorte. Angaben in kcal/kg durch 10 teilen. Komma oder Punkt sind möglich, z. B. 98,5. Unbekannte Werte leer lassen.</p>
               {state.feedItems.map((item) => <label className="amount-input-row" key={item.id}>
                 <span>{item.name}</span>
-                <span className="input-with-unit"><input type="number" min="0.1" max="1000" step="0.1"
+                <span className="input-with-unit"><input type="text" inputMode="decimal"
                   aria-label={`Energiegehalt ${item.name} in kcal pro 100 g`} placeholder="Unbekannt"
                   value={energyValues[item.id] ?? ""} onChange={(event) => { setEnergySaved(false); setEnergyValues({ ...energyValues, [item.id]: event.target.value }); }} />
                   <span>kcal</span></span>

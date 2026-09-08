@@ -55,7 +55,7 @@ test("renders real initial data and returns updated data directly after saving",
   const html = await response.text();
   assert.match(html, /<title>Rosies Tagebuch · Fütterung<\/title>/i);
   assert.match(html, /Testfutter/);
-  assert.match(html, /Flexibler Trockenfutter-Ausgleich/);
+  assert.match(html, /Flexibler Futterausgleich/);
   assert.match(html, /noch vorgeschlagen/);
   assert.doesNotMatch(html, /Rosies Fütterung wird geladen/);
 });

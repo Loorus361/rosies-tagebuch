@@ -33,7 +33,19 @@ test("flexible dry exchange, calorie exchange, corrections, history and owner is
   assert.equal(state.day.balance.mode, "approximate");
   assert.deepEqual([a,b,c].map(food => state.day.meals[1].allocations.find(f => f.id === food.id).plannedGrams), [0,25,50]);
   await request({ action: "save_energy", items: [{ feedItemId: a.id, kcalPer100g: 400 }] }, "intruder", 400);
-  for (const invalid of [-1,0,1001,"invalid"]) await request({ action: "save_energy", items: [{ feedItemId: a.id, kcalPer100g: invalid }] }, undefined, 400);
+  for (const invalid of [-1,0,1001,"invalid",true,"98,5.2","1,2,3"]) await request({ action: "save_energy", items: [{ feedItemId: a.id, kcalPer100g: invalid }] }, undefined, 400);
+  // Both decimal separators survive saving, including precision beyond one decimal place.
+  for (const value of ["98,55", "98.55"]) {
+    state = await request({ action: "save_energy", items: [{ feedItemId: c.id, kcalPer100g: value }] });
+    assert.equal(state.feedItems.find(f => f.id === c.id).kcalPer100g, 98.55);
+  }
+  // Missing calories for one food must not disable known wet/dry exchanges.
+  state = await request({ action: "save_energy", items: [{ feedItemId: a.id, kcalPer100g: 400 }, { feedItemId: c.id, kcalPer100g: 100 }] });
+  assert.equal(state.day.balance.mode, "approximate");
+  assert.deepEqual(state.day.totals.map(f => f.remainingGrams), [0,100,0]);
+  state = await request({ action: "save_meal", mealId: first, actuals: actuals(0,0,300) });
+  assert.deepEqual(state.day.totals.map(f => f.remainingGrams), [50,100,0]);
+  state = await request({ action: "save_meal", mealId: first, actuals: actuals(150,0,0) });
   state = await request({ action: "save_energy", items: [a,b,c].map((f,i) => ({ feedItemId: f.id, kcalPer100g: [400,400,100][i] })) });
   assert.equal(state.currentPlan.id, planId);
   assert.deepEqual(state.day.balance, { mode: "energy", targetKcal: 900, actualKcal: 600 });
