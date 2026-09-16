@@ -1,15 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 
-const migrations = [
-  "0000_loose_sabra.sql",
-  "0001_rare_emma_frost.sql",
-  "0002_blushing_purifiers.sql",
-  "0003_married_william_stryker.sql", "0004_flawless_warpath.sql",
-];
+const migrations = (await readdir(new URL("../drizzle/", import.meta.url))).filter(name => name.endsWith(".sql")).sort();
 
 test("serves the restricted Hermes MCP tools for feeding, corrections, and medication", async (t) => {
   const miniflare = new Miniflare({

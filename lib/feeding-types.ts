@@ -13,11 +13,12 @@ export type MealMedication = Medication & {
   given: boolean;
   givenAt: string | null;
 };
-export type PlanItem = FeedItem & { dailyGrams: number };
+export type PlanItem = FeedItem & { dailyGrams: number; caloriePercent?: number | null };
 export type PlanView = {
   id: string;
   effectiveDate: string;
   mealCount: number;
+  targetKcal?: number | null;
   items: PlanItem[];
   medications: PlanMedication[];
 };
@@ -25,6 +26,7 @@ export type DayTotal = FeedItem & {
   targetGrams: number;
   actualGrams: number;
   remainingGrams: number;
+  caloriePercent?: number | null;
 };
 export type MealAllocation = FeedItem & {
   plannedGrams: number;
@@ -46,6 +48,7 @@ export type DayView = {
   mealCount: number;
   effectiveDate: string;
   virtual: boolean;
+  targetKcal?: number | null;
   balance?: { mode: "energy" | "approximate"; targetKcal: number | null; actualKcal: number | null };
   totals: DayTotal[];
   meals: MealView[];

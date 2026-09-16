@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
@@ -27,7 +27,7 @@ test("runs the complete daily feeding flow without changing future defaults", as
   });
   t.after(() => miniflare.dispose());
   const db = await miniflare.getD1Database("DB");
-  for (const migrationName of ["0000_loose_sabra.sql", "0001_rare_emma_frost.sql", "0002_blushing_purifiers.sql", "0003_married_william_stryker.sql", "0004_flawless_warpath.sql"]) {
+  for (const migrationName of (await readdir(new URL("../drizzle/", import.meta.url))).filter(name => name.endsWith(".sql")).sort()) {
     const migration = await readFile(new URL(`../drizzle/${migrationName}`, import.meta.url), "utf8");
     for (const statement of migration.split("--> statement-breakpoint").map((value) => value.trim()).filter(Boolean)) {
       await db.prepare(statement).run();

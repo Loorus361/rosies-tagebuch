@@ -131,9 +131,22 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .amount-input-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; }
 .amount-input-row > span:first-child { display: grid; gap: 3px; font-weight: 700; }
 .amount-input-row small { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.amount-label { display: grid; align-content: center; gap: 3px; min-width: 0; flex: 1; font-weight: 700; }
+.amount-label > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.amount-label .meal-kind-label { display: block; }
+.amount-controls { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 .meal-kind-label { display: block; color: #8a7a6d !important; font-size: .7rem !important; font-weight: 500 !important; line-height: 1.25; }
 .input-with-unit { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .input-with-unit input { width: 92px; text-align: right; }
+.amount-adjusters { display: inline-flex; align-items: center; gap: 4px; }
+.adjust-button { min-width: 34px; min-height: 32px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.58); color: var(--ink); font-size: .76rem; font-weight: 700; }
+.adjust-button:hover { border-color: rgba(169,86,63,.45); background: #fff8ef; }
+.reset-suggestion { min-height: 32px; padding: 4px 7px; border: 0; border-radius: 8px; background: #f4dfd6; color: var(--terracotta-dark); font-size: .72rem; font-weight: 700; }
+.manual-amount { border-left: 3px solid var(--terracotta); padding-left: 10px; }
+.manual-marker { color: var(--terracotta-dark) !important; font-size: .68rem !important; font-weight: 800 !important; letter-spacing: .02em; }
+.meal-form-note { margin: 0 0 8px; color: var(--muted); font-size: .78rem; line-height: 1.45; }
+.meal-kcal-status { margin: 4px 0 2px; padding: 9px 11px; border-radius: 10px; background: rgba(111,128,98,.1); color: #4f6545; font-size: .78rem; font-weight: 700; line-height: 1.4; }
+.meal-kcal-status.has-delta { background: #f7e3d8; color: var(--terracotta-dark); }
 .form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 12px; }
 .primary-button.compact { padding: 10px 14px; }
 .extra-meal-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 18px; padding: 22px 24px; border: 1px dashed rgba(127,60,44,.28); border-radius: 20px; background: rgba(255,250,242,.55); }
@@ -188,6 +201,26 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .segmented input:checked + span { background: var(--paper); color: var(--ink); box-shadow: 0 3px 12px rgba(65,45,31,.1); }
 .two-fields { display: grid; grid-template-columns: 1fr 120px; gap: 10px; margin: 20px 0 10px; }
 .daily-amounts { padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.target-kcal-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 20px 0 12px; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .83rem; font-weight: 700; }
+.target-kcal-field .input-with-unit input { width: 120px; color: var(--ink); font-weight: 700; }
+.legacy-draft-note { margin: 12px 0; padding: 11px 12px; border-radius: 11px; background: #f7e9d5; color: #735f3a; font-size: .78rem; line-height: 1.45; }
+.plan-percentages { display: grid; padding: 4px 0 8px; border-bottom: 1px solid var(--line); }
+.plan-percentage-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(96px, auto); align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(86,62,45,.08); }
+.plan-percentage-row:last-child { border-bottom: 0; }
+.percentage-label { display: grid; gap: 3px; min-width: 0; color: var(--ink); font-weight: 700; }
+.percentage-label > span { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.percentage-label small { color: var(--muted); font-size: .7rem; font-weight: 500; }
+.percentage-input-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.percentage-input-wrap input { width: 76px; text-align: right; }
+.plan-preview-grams { color: var(--muted); font-size: .76rem; text-align: right; white-space: nowrap; }
+.plan-preview { display: grid; gap: 9px; margin-top: 14px; }
+.percentage-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 12px; border-radius: 11px; font-size: .78rem; }
+.percentage-total span { text-align: right; }
+.percentage-total.valid { background: rgba(111,128,98,.1); color: #4f6545; }
+.percentage-total.invalid { background: #f7e3d8; color: var(--terracotta-dark); }
+.plan-rounding-note { margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
+.plan-rounding-note.has-delta { color: var(--terracotta-dark); font-weight: 700; }
+.summary-kcal { margin: 8px 0 0; color: var(--terracotta-dark); font-size: .84rem; }
 .medication-plan-editor { margin-top: 28px; padding-top: 25px; border-top: 1px solid var(--line); }
 .medication-plan-editor h3 { margin-bottom: 6px; }
 .medication-plan-editor > div > .muted { font-size: .86rem; }
@@ -241,11 +274,24 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
   .settings-panel, .settings-panel + .settings-panel { padding: 24px 0 6px; border-left: 0; }
   .settings-panel + .settings-panel { border-top: 1px solid var(--line); }
   .two-fields { grid-template-columns: 1fr 105px; }
+  .plan-percentage-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .plan-preview-grams { grid-column: 1 / -1; text-align: left; }
+  .amount-input-row { align-items: flex-start; }
+  .amount-controls { max-width: 100%; }
   .medication-fields { grid-template-columns: 1fr; }
   .medication-dose { align-items: stretch; flex-direction: column; }
   .medication-check { justify-content: center; width: 100%; }
   .agent-access-actions { align-items: stretch; flex-direction: column; }
   .agent-access-actions .primary-button { width: 100%; }
+}
+
+@media (max-width: 430px) {
+  .amount-controls { display: grid; grid-template-columns: 1fr; justify-items: end; }
+  .amount-adjusters { justify-content: flex-end; }
+  .amount-adjusters .adjust-button { min-width: 31px; padding-inline: 4px; }
+  .input-with-unit input { width: 82px; }
+  .percentage-total { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .percentage-total span { text-align: left; }
 }
 
 @media (prefers-reduced-motion: reduce) {

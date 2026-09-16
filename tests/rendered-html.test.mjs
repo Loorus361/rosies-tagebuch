@@ -25,7 +25,7 @@ async function runtime(t) {
   });
   t.after(() => mf.dispose());
   const db = await mf.getD1Database("DB");
-  for (const name of ["0000_loose_sabra.sql", "0001_rare_emma_frost.sql", "0002_blushing_purifiers.sql", "0003_married_william_stryker.sql", "0004_flawless_warpath.sql"]) {
+  for (const name of (await readdir(new URL("../drizzle/", import.meta.url))).filter(name => name.endsWith(".sql")).sort()) {
     const sql = await readFile(new URL(`../drizzle/${name}`, import.meta.url), "utf8");
     for (const statement of sql.split("--> statement-breakpoint").map(s => s.trim()).filter(Boolean)) await db.prepare(statement).run();
   }

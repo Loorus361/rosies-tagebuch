@@ -26,6 +26,7 @@ export const planVersions = sqliteTable("plan_versions", {
   ownerId: text("owner_id").notNull(),
   effectiveDate: text("effective_date").notNull(),
   mealCount: integer("meal_count").notNull(),
+  targetKcal: real("target_kcal"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
   index("idx_plan_versions_owner_effective").on(table.ownerId, table.effectiveDate, table.createdAt),
@@ -35,6 +36,7 @@ export const planVersionItems = sqliteTable("plan_version_items", {
   planVersionId: text("plan_version_id").notNull().references(() => planVersions.id, { onDelete: "cascade" }),
   feedItemId: text("feed_item_id").notNull().references(() => feedItems.id),
   dailyGrams: real("daily_grams").notNull(),
+  caloriePercent: real("calorie_percent"),
 }, (table) => [primaryKey({ columns: [table.planVersionId, table.feedItemId] })]);
 
 export const planVersionMedicationDoses = sqliteTable("plan_version_medication_doses", {
@@ -52,6 +54,7 @@ export const feedingDays = sqliteTable("feeding_days", {
   planDate: text("plan_date").notNull(),
   sourcePlanVersionId: text("source_plan_version_id").references(() => planVersions.id),
   mealCount: integer("meal_count").notNull(),
+  targetKcal: real("target_kcal"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
   uniqueIndex("idx_feeding_days_owner_date").on(table.ownerId, table.planDate),
@@ -63,6 +66,7 @@ export const feedingDayItems = sqliteTable("feeding_day_items", {
   itemName: text("item_name").notNull(),
   feedKind: text("feed_kind", { enum: ["wet", "dry"] }).notNull(),
   targetGrams: real("target_grams").notNull(),
+  caloriePercent: real("calorie_percent"),
 }, (table) => [primaryKey({ columns: [table.dayId, table.feedItemId] })]);
 
 export const mealRecords = sqliteTable("meal_records", {

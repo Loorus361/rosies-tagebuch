@@ -13,9 +13,15 @@ import type {
   PlanView,
 } from "@/lib/feeding-types";
 
-type VersionRow = { id: string; effective_date: string; meal_count: number };
-type DayRow = { id: string; plan_date: string; meal_count: number; effective_date: string };
-type DayItemRow = { feed_item_id: string; item_name: string; feed_kind: FeedKind; target_grams: number };
+type VersionRow = { id: string; effective_date: string; meal_count: number; target_kcal: number | null };
+type DayRow = { id: string; plan_date: string; meal_count: number; target_kcal: number | null; effective_date: string };
+type DayItemRow = {
+  feed_item_id: string;
+  item_name: string;
+  feed_kind: FeedKind;
+  target_grams: number;
+  calorie_percent: number | null;
+};
 type MealRow = {
   id: string;
   meal_number: number;
@@ -48,6 +54,10 @@ type MealMedicationRow = {
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_TARGET_KCAL = 10_000;
+const MAX_DAILY_GRAMS = 10_000;
+const CALORIE_PERCENT_TOLERANCE = 0.01;
+type RequestedPlanItem = { feedItemId: string; dailyGrams?: number; caloriePercent?: number };
 
 export function berlinToday(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -151,7 +161,13 @@ export async function createMedication(ownerId: string, rawName: unknown): Promi
 
 export async function savePlan(
   ownerId: string,
-  input: { effectiveDate?: unknown; mealCount?: unknown; items?: unknown; medications?: unknown },
+  input: {
+    effectiveDate?: unknown;
+    mealCount?: unknown;
+    targetKcal?: unknown;
+    items?: unknown;
+    medications?: unknown;
+  },
 ): Promise<void> {
   assertDate(input.effectiveDate);
   const effectiveDate = input.effectiveDate;
@@ -164,16 +180,41 @@ export async function savePlan(
     throw new Error("Bitte zwei bis sechs Mahlzeiten wählen.");
   }
   if (!Array.isArray(input.items)) throw new Error("Bitte mindestens eine Tagesmenge eintragen.");
-  const requested = input.items.map((entry) => {
-    const item = entry as { feedItemId?: unknown; dailyGrams?: unknown };
+  const targetKcal = input.targetKcal === undefined || input.targetKcal === null
+    ? null
+    : parsePositiveNumber(input.targetKcal);
+  if (targetKcal !== null && targetKcal > MAX_TARGET_KCAL) {
+    throw new Error("Das Tagesbudget muss zwischen 0 und 10.000 kcal liegen.");
+  }
+  const explicitCalories = targetKcal !== null;
+  const requested: RequestedPlanItem[] = input.items.map((entry) => {
+    const item = entry as { feedItemId?: unknown; dailyGrams?: unknown; caloriePercent?: unknown };
     const feedItemId = typeof item.feedItemId === "string" ? item.feedItemId : "";
+    if (explicitCalories) {
+      const caloriePercent = parseFiniteNumber(item.caloriePercent);
+      if (!feedItemId || caloriePercent === null || caloriePercent < 0 || caloriePercent > 100) {
+        throw new Error("Bitte gültige Kalorienanteile zwischen 0 und 100 % eintragen.");
+      }
+      return { feedItemId, caloriePercent };
+    }
     const dailyGrams = Number(item.dailyGrams);
-    if (!feedItemId || !Number.isFinite(dailyGrams) || dailyGrams < 0 || dailyGrams > 10000) {
+    if (
+      !feedItemId
+      || (item.caloriePercent !== undefined && item.caloriePercent !== null)
+      || !Number.isFinite(dailyGrams)
+      || dailyGrams < 0
+      || dailyGrams > MAX_DAILY_GRAMS
+    ) {
       throw new Error("Bitte gültige Tagesmengen zwischen 0 und 10.000 g eintragen.");
     }
     return { feedItemId, dailyGrams: roundGram(dailyGrams) };
   });
-  if (!requested.some((item) => item.dailyGrams > 0)) {
+  if (explicitCalories) {
+    const percentageTotal = requested.reduce((sum, item) => sum + (item.caloriePercent ?? 0), 0);
+    if (Math.abs(percentageTotal - 100) > CALORIE_PERCENT_TOLERANCE) {
+      throw new Error("Die Kalorienanteile müssen zusammen 100 % ergeben.");
+    }
+  } else if (!requested.some((item) => (item.dailyGrams ?? 0) > 0)) {
     throw new Error("Mindestens eine Tagesmenge muss größer als 0 g sein.");
   }
   const ids = [...new Set(requested.map((item) => item.feedItemId))];
@@ -235,6 +276,27 @@ export async function savePlan(
   if (ownedRows.results.length !== ids.length) {
     throw new Error("Mindestens ein Futterbaustein gehört nicht zu diesem privaten Bereich.");
   }
+  const energy = explicitCalories ? await readEnergy(ownerId, effectiveDate) : null;
+  const planItems = requested.map((item) => {
+    const owned = ownedRows.results.find((row) => row.id === item.feedItemId)!;
+    if (!explicitCalories) {
+      return { ...owned, dailyGrams: item.dailyGrams!, caloriePercent: null };
+    }
+    const caloriePercent = item.caloriePercent!;
+    const kcalPer100g = energy!.get(item.feedItemId) ?? null;
+    if (caloriePercent > 0 && !(kcalPer100g != null && Number.isFinite(kcalPer100g) && kcalPer100g > 0)) {
+      throw new Error(`Für „${owned.name}“ fehlt der Energiegehalt am ${effectiveDate}.`);
+    }
+    const dailyGrams = caloriePercent === 0 ? 0 : targetKcal! * caloriePercent / kcalPer100g!;
+    if (!Number.isFinite(dailyGrams) || dailyGrams < 0 || dailyGrams > MAX_DAILY_GRAMS) {
+      throw new Error(`Die berechnete Tagesmenge für „${owned.name}“ ist nicht plausibel.`);
+    }
+    return { ...owned, dailyGrams, caloriePercent };
+  });
+  if (explicitCalories && !planItems.some((item) => item.dailyGrams > 0)) {
+    throw new Error("Mindestens ein Kalorienanteil muss größer als 0 % sein.");
+  }
+  const persistedItems = planItems.filter((item) => item.dailyGrams > 0);
   const medicationIds = requestedMedications.map((item) => item.medicationId);
   const ownedMedications = medicationIds.length === 0
     ? { results: [] as Medication[] }
@@ -244,18 +306,15 @@ export async function savePlan(
   if (ownedMedications.results.length !== medicationIds.length) {
     throw new Error("Mindestens ein Medikament gehört nicht zu diesem privaten Bereich.");
   }
-  const positiveItems = requested.filter((item) => item.dailyGrams > 0).map((item) => ({
-    ...ownedRows.results.find((row) => row.id === item.feedItemId)!,
-    dailyGrams: item.dailyGrams,
-  }));
   const versionId = crypto.randomUUID();
   await db.batch([
     db.prepare(
-      `INSERT INTO plan_versions (id, owner_id, effective_date, meal_count, created_at) VALUES (?, ?, ?, ?, ?)`,
-    ).bind(versionId, ownerId, effectiveDate, mealCount, new Date().toISOString()),
-    ...positiveItems.map((item) => db.prepare(
-      `INSERT INTO plan_version_items (plan_version_id, feed_item_id, daily_grams) VALUES (?, ?, ?)`,
-    ).bind(versionId, item.id, item.dailyGrams)),
+      `INSERT INTO plan_versions (id, owner_id, effective_date, meal_count, target_kcal, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(versionId, ownerId, effectiveDate, mealCount, targetKcal, new Date().toISOString()),
+    ...persistedItems.map((item) => db.prepare(
+      `INSERT INTO plan_version_items
+       (plan_version_id, feed_item_id, daily_grams, calorie_percent) VALUES (?, ?, ?, ?)`,
+    ).bind(versionId, item.id, item.dailyGrams, item.caloriePercent)),
     ...requestedMedications.flatMap((item) => item.mealNumbers.map((mealNumber) => db.prepare(
       `INSERT INTO plan_version_medication_doses
        (plan_version_id, medication_id, medication_name, target_amount, unit, meal_number)
@@ -275,7 +334,8 @@ export async function savePlan(
       today,
       versionId,
       mealCount,
-      positiveItems,
+      targetKcal,
+      persistedItems,
       requestedMedications.map((item) => ({
         ...item,
         name: ownedMedications.results.find((medication) => medication.id === item.medicationId)!.name,
@@ -323,6 +383,9 @@ export async function saveMeal(
     }
     return { feedItemId, actualGrams: roundGram(actualGrams) };
   });
+  if (new Set(actuals.map((item) => item.feedItemId)).size !== actuals.length) {
+    throw new Error("Die Futterangaben sind nicht mehr aktuell. Bitte lade den Tag neu.");
+  }
   if (actuals.length !== allocationRows.results.length || actuals.some((item) =>
     !allocationRows.results.some((row) => row.feed_item_id === item.feedItemId))) {
     throw new Error("Die Futterangaben sind nicht mehr aktuell. Bitte lade den Tag neu.");
@@ -559,17 +622,23 @@ async function removeMealRecord(ownerId: string, rawMealId: unknown, completed: 
 async function readPlan(ownerId: string, date: string): Promise<PlanView | null> {
   const db = getD1();
   const version = await db.prepare(
-    `SELECT id, effective_date, meal_count FROM plan_versions
+    `SELECT id, effective_date, meal_count, target_kcal FROM plan_versions
      WHERE owner_id = ? AND effective_date <= ?
      ORDER BY effective_date DESC, created_at DESC, id DESC LIMIT 1`,
   ).bind(ownerId, date).first<VersionRow>();
   if (!version) return null;
   const [rows, medicationDoses] = await Promise.all([
     db.prepare(
-      `SELECT f.id, f.name, f.kind, p.daily_grams
+      `SELECT f.id, f.name, f.kind, p.daily_grams, p.calorie_percent
        FROM plan_version_items p JOIN feed_items f ON f.id = p.feed_item_id
        WHERE p.plan_version_id = ? ORDER BY f.created_at ASC`,
-    ).bind(version.id).all<{ id: string; name: string; kind: FeedKind; daily_grams: number }>(),
+    ).bind(version.id).all<{
+      id: string;
+      name: string;
+      kind: FeedKind;
+      daily_grams: number;
+      calorie_percent: number | null;
+    }>(),
     db.prepare(
       `SELECT medication_id, medication_name, target_amount, unit, meal_number
        FROM plan_version_medication_doses
@@ -581,8 +650,13 @@ async function readPlan(ownerId: string, date: string): Promise<PlanView | null>
     id: version.id,
     effectiveDate: version.effective_date,
     mealCount: version.meal_count,
+    targetKcal: version.target_kcal == null ? null : Number(version.target_kcal),
     items: rows.results.map((row) => ({
-      id: row.id, name: row.name, kind: row.kind, dailyGrams: Number(row.daily_grams),
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      dailyGrams: Number(row.daily_grams),
+      caloriePercent: row.calorie_percent == null ? null : Number(row.calorie_percent),
     })),
     medications: medicationIds.map((medicationId) => {
       const dose = medicationDoses.results.find((item) => item.medication_id === medicationId)!;
@@ -611,13 +685,14 @@ async function ensureDay(ownerId: string, date: string, plan: PlanView): Promise
   const statements = [
     db.prepare(
       `INSERT OR IGNORE INTO feeding_days
-       (id, owner_id, plan_date, source_plan_version_id, meal_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).bind(dayId, ownerId, date, plan.id, plan.mealCount, new Date().toISOString()),
+       (id, owner_id, plan_date, source_plan_version_id, meal_count, target_kcal, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(dayId, ownerId, date, plan.id, plan.mealCount, plan.targetKcal ?? null, new Date().toISOString()),
     ...plan.items.map((item) => db.prepare(
       `INSERT OR IGNORE INTO feeding_day_items
-       (day_id, feed_item_id, item_name, feed_kind, target_grams) VALUES (?, ?, ?, ?, ?)`,
-    ).bind(dayId, item.id, item.name, item.kind, item.dailyGrams)),
+       (day_id, feed_item_id, item_name, feed_kind, target_grams, calorie_percent)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(dayId, item.id, item.name, item.kind, item.dailyGrams, item.caloriePercent ?? null)),
     ...mealIds.map((id, index) => db.prepare(
       `INSERT OR IGNORE INTO meal_records (id, day_id, meal_number, is_extra, completed_at) VALUES (?, ?, ?, 0, NULL)`,
     ).bind(id, dayId, index + 1)),
@@ -647,14 +722,15 @@ async function ensureDay(ownerId: string, date: string, plan: PlanView): Promise
 async function readDay(ownerId: string, date: string): Promise<DayView | null> {
   const db = getD1();
   const day = await db.prepare(
-    `SELECT d.id, d.plan_date, d.meal_count, p.effective_date
+    `SELECT d.id, d.plan_date, d.meal_count, d.target_kcal, p.effective_date
      FROM feeding_days d LEFT JOIN plan_versions p ON p.id = d.source_plan_version_id
      WHERE d.owner_id = ? AND d.plan_date = ?`,
   ).bind(ownerId, date).first<DayRow>();
   if (!day) return null;
   const [dayItems, meals, allocations, medicationRows] = await Promise.all([
     db.prepare(
-      `SELECT feed_item_id, item_name, feed_kind, target_grams FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
+      `SELECT feed_item_id, item_name, feed_kind, target_grams, calorie_percent
+       FROM feeding_day_items WHERE day_id = ? ORDER BY rowid`,
     ).bind(day.id).all<DayItemRow>(),
     db.prepare(
       `SELECT id, meal_number, is_extra, completed_at, recorded_via
@@ -702,11 +778,18 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
     id: item.feed_item_id, name: item.item_name, kind: item.feed_kind,
   }));
   const totals: DayTotal[] = [...metadata.values()].map((item) => {
-    const target = Number(dayItems.results.find((row) => row.feed_item_id === item.id)?.target_grams ?? 0);
+    const dayItem = dayItems.results.find((row) => row.feed_item_id === item.id);
+    const target = Number(dayItem?.target_grams ?? 0);
     const actual = roundGram(allocations.results.filter(
       (row) => row.feed_item_id === item.id && row.actual_grams != null,
     ).reduce((sum, row) => sum + Number(row.actual_grams), 0));
-    return { ...item, targetGrams: target, actualGrams: actual, remainingGrams: Math.max(0, roundGram(target - actual)) };
+    return {
+      ...item,
+      targetGrams: target,
+      actualGrams: actual,
+      remainingGrams: Math.max(0, roundGram(target - actual)),
+      caloriePercent: dayItem?.calorie_percent == null ? null : Number(dayItem.calorie_percent),
+    };
   });
   return {
     id: day.id,
@@ -714,6 +797,7 @@ async function readDay(ownerId: string, date: string): Promise<DayView | null> {
     mealCount: day.meal_count,
     effectiveDate: day.effective_date ?? day.plan_date,
     virtual: false,
+    targetKcal: day.target_kcal == null ? null : Number(day.target_kcal),
     totals,
     meals: mealViews,
   };
@@ -724,7 +808,8 @@ async function applyPlanToToday(
   date: string,
   versionId: string,
   mealCount: number,
-  planItems: Array<{ id: string; name: string; kind: FeedKind; dailyGrams: number }>,
+  targetKcal: number | null,
+  planItems: Array<{ id: string; name: string; kind: FeedKind; dailyGrams: number; caloriePercent?: number | null }>,
   planMedications: Array<{
     medicationId: string;
     name: string;
@@ -768,20 +853,23 @@ async function applyPlanToToday(
   ).bind(day.id).all<{ feed_item_id: string }>();
   const statements = [
     db.prepare(
-      `UPDATE feeding_days SET source_plan_version_id = ?, meal_count = ? WHERE id = ? AND owner_id = ?`,
-    ).bind(versionId, mealCount, day.id, ownerId),
+      `UPDATE feeding_days SET source_plan_version_id = ?, meal_count = ?, target_kcal = ? WHERE id = ? AND owner_id = ?`,
+    ).bind(versionId, mealCount, targetKcal, day.id, ownerId),
     ...mealRows.results.map((item, index) => db.prepare(
       `UPDATE meal_records SET meal_number = ? WHERE id = ? AND day_id = ?`,
     ).bind(-(index + 1), item.id, day.id)),
     ...oldItems.results.map((item) => db.prepare(
-      `UPDATE feeding_day_items SET target_grams = 0 WHERE day_id = ? AND feed_item_id = ?`,
+      `UPDATE feeding_day_items SET target_grams = 0, calorie_percent = NULL
+       WHERE day_id = ? AND feed_item_id = ?`,
     ).bind(day.id, item.feed_item_id)),
     ...planItems.map((item) => db.prepare(
-      `INSERT INTO feeding_day_items (day_id, feed_item_id, item_name, feed_kind, target_grams)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO feeding_day_items
+       (day_id, feed_item_id, item_name, feed_kind, target_grams, calorie_percent)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(day_id, feed_item_id) DO UPDATE SET
-       item_name = excluded.item_name, feed_kind = excluded.feed_kind, target_grams = excluded.target_grams`,
-    ).bind(day.id, item.id, item.name, item.kind, item.dailyGrams)),
+       item_name = excluded.item_name, feed_kind = excluded.feed_kind,
+       target_grams = excluded.target_grams, calorie_percent = excluded.calorie_percent`,
+    ).bind(day.id, item.id, item.name, item.kind, item.dailyGrams, item.caloriePercent ?? null)),
     ...obsolete.map((item) => db.prepare(
       `DELETE FROM meal_records WHERE id = ? AND day_id = ?`,
     ).bind(item.id, day.id)),
@@ -851,7 +939,9 @@ function virtualDay(date: string, plan: PlanView): DayView {
     totals: plan.items.map((item) => ({
       id: item.id, name: item.name, kind: item.kind,
       targetGrams: item.dailyGrams, actualGrams: 0, remainingGrams: item.dailyGrams,
+      caloriePercent: item.caloriePercent == null ? null : item.caloriePercent,
     })),
+    targetKcal: plan.targetKcal == null ? null : plan.targetKcal,
     meals,
   };
 }
@@ -866,6 +956,21 @@ function distribute(total: number, count: number): number[] {
 
 function roundGram(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function parseFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const number = typeof value === "string" ? Number(value.trim().replace(",", ".")) : Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parsePositiveNumber(value: unknown): number {
+  const number = parseFiniteNumber(value);
+  if (number === null || number <= 0) {
+    throw new Error("Das Tagesbudget muss eine positive Zahl sein.");
+  }
+  return number;
 }
 
 function normalizeShortText(value: unknown, maxLength: number): string {
@@ -968,6 +1073,26 @@ export async function saveFeedEnergy(ownerId: string, rawItems: unknown): Promis
   const previous = await readEnergy(ownerId, today);
   const changed = items.filter((item) => (previous.get(item.id) ?? null) !== item.kcal);
   if (!changed.length) return;
+  const [activePlan, futurePlanItems] = await Promise.all([
+    readPlan(ownerId, today),
+    db.prepare(
+      `SELECT DISTINCT i.feed_item_id
+       FROM plan_versions p JOIN plan_version_items i ON i.plan_version_id = p.id
+       WHERE p.owner_id = ? AND p.effective_date >= ?
+         AND p.target_kcal IS NOT NULL AND i.calorie_percent > 0`,
+    ).bind(ownerId, today).all<{ feed_item_id: string }>(),
+  ]);
+  const protectedIds = new Set(
+    [
+      ...(activePlan?.targetKcal == null
+        ? []
+        : activePlan.items.filter((item) => (item.caloriePercent ?? 0) > 0).map((item) => item.id)),
+      ...futurePlanItems.results.map((item) => item.feed_item_id),
+    ],
+  );
+  if (changed.some((item) => item.kcal === null && protectedIds.has(item.id))) {
+    throw new Error("Ein Energiegehalt wird noch von einem aktiven Kalorienplan benötigt.");
+  }
   await db.batch(changed.map((item) => db.prepare(`INSERT INTO feed_energy_versions
     (id, owner_id, feed_item_id, kcal_per_100g, effective_date, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), ownerId, item.id, item.kcal, today, new Date().toISOString())));
