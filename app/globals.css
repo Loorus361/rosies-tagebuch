@@ -74,7 +74,7 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 
 .totals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 18px; }
 .total-card { padding: 16px; }
-.total-title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.total-title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px 18px; flex-wrap: wrap; }
 .total-title-row h3 { margin: 7px 0 0; }
 .total-title-row > strong { color: var(--terracotta-dark); white-space: nowrap; font-size: .96rem; }
 .kind-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
@@ -131,10 +131,12 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 .amount-input-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; }
 .amount-input-row > span:first-child { display: grid; gap: 3px; font-weight: 700; }
 .amount-input-row small { color: var(--muted); font-size: .75rem; font-weight: 400; }
-.amount-label { display: grid; align-content: center; gap: 3px; min-width: 0; flex: 1; font-weight: 700; }
-.amount-label > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.meal-form .amount-input-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.amount-label { display: grid; align-content: center; gap: 3px; min-width: 0; font-weight: 700; }
+.amount-label > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: break-word; }
 .amount-label .meal-kind-label { display: block; }
-.amount-controls { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.amount-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.amount-controls > .input-with-unit, .amount-adjusters { flex-shrink: 0; }
 .meal-kind-label { display: block; color: #8a7a6d !important; font-size: .7rem !important; font-weight: 500 !important; line-height: 1.25; }
 .input-with-unit { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .input-with-unit input { width: 92px; text-align: right; }
@@ -286,7 +288,6 @@ h3 { margin-bottom: 8px; font-family: Georgia, serif; font-size: 1.35rem; }
 }
 
 @media (max-width: 430px) {
-  .amount-controls { display: grid; grid-template-columns: 1fr; justify-items: end; }
   .amount-adjusters { justify-content: flex-end; }
   .amount-adjusters .adjust-button { min-width: 31px; padding-inline: 4px; }
   .input-with-unit input { width: 82px; }
