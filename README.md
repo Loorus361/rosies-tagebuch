@@ -1,6 +1,6 @@
 # Rosies Tagebuch
 
-Private ChatGPT-Sites-App für Rosies Fütterungsplanung und Tageshistorie.
+ChatGPT-Sites-App für Rosies Fütterungsplanung und Tageshistorie.
 
 ## Prerequisites
 
@@ -58,3 +58,11 @@ Sind für alle verwendeten Sorten kcal/100 g bekannt, gilt ein gemeinsames Energ
 Energiewerte werden separat mit `save_energy` gespeichert und gelten ab dem aktuellen Berliner Datum. Die append-only Tabelle `feed_energy_versions` erhält frühere Werte für frühere Tage. Leere Werte bedeuten unbekannt. Tagespläne, tatsächliche Fütterungsmengen und Medikamente werden durch diese Einstellung nicht geändert.
 
 Herstellerbeispiele (geprüft am 05.09.2026): [Platinum Adult Chicken](https://www.platinum.com/Hund/Produkte-Hundefutter/Trockenfutter/Adult-Chicken.html) 364,4 kcal/100 g; [Royal Canin Gastrointestinal trocken](https://www.royalcanin.com/de/dogs/products/vet-products/gastrointestinal-3911) 412,6 kcal/100 g; [Gastrointestinal Mousse](https://www.royalcanin.com/de/dogs/products/vet-products/gastrointestinal-4038) 110,4 kcal/100 g. 100 g dieser Mousse entsprechen energetisch ca. 26,8 g des genannten Trockenfutters, nicht pauschal 10 g. Maßgeblich ist die konkrete Packung; Energiegleichheit garantiert keine gleiche Nährstoffzusammensetzung.
+
+## Lizenz
+
+Der Quellcode steht unter der [MIT-Lizenz](LICENSE). Abhängigkeiten behalten ihre jeweiligen Lizenzen.
+
+## Eigene Installation
+
+Dieses Repository enthält den Quellcode einer persönlichen Sites-/D1-App. Die veröffentlichte Software gewährt keinen Zugriff auf die bestehende private Installation oder deren Daten. Eine eigene Bereitstellung benötigt eine eigene Datenbank, Hosting-Konfiguration und eine bewusst konfigurierte Owner-Prüfung. Die Zugriffskontrollen dürfen nicht zur Vereinfachung der Einrichtung entfernt werden.
